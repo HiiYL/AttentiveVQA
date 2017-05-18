@@ -90,11 +90,13 @@ class EncoderFC(nn.Module):
         super(EncoderFC, self).__init__()
         self.fc_global = nn.Sequential(
             nn.Linear(2048, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
         self.fc_local = nn.Sequential(
             nn.Linear(2048, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout()
         )
@@ -134,8 +136,8 @@ class G_Spatial(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
 
+        self.embed = nn.Linear(len(question_vocab), embed_size)
         self.fc = nn.Linear(hidden_size * 2, len(ans_vocab))
-        self.embed = nn.Linear(self.vocab_size, embed_size)
         self.v2h = nn.Linear(embed_size * 2, embed_size)
 
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
@@ -224,46 +226,49 @@ class G_Spatial(nn.Module):
             inputs = torch.cat((inputs, features_global),1)
 
             hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
+            hiddens_ctx_tensor[ :, i, :] = torch.cat((hx,cx),1)
 
-        combined = torch.cat((hx,cx),1)
+        #(64L, 16L, 1024L)
+        combined = [ hiddens_ctx_tensor[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
+        combined = torch.cat(combined, 0)
         outputs = self.fc(combined)
         return outputs#, hiddens_tensor
 
-    def _forward_free_cell(self, features, lengths, states, adversarial=False):
-        output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
-        hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
+    # def _forward_free_cell(self, features, lengths, states, adversarial=False):
+    #     output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
+    #     hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
 
-        features_global, features_local = features
-        inputs = features_global
-        #onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
-        #onehot[:,0] = 1
-        #onehot = Variable(onehot, volatile=True)
-        #inputs = self.embed(onehot)
+    #     features_global, features_local = features
+    #     inputs = features_global
+    #     #onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
+    #     #onehot[:,0] = 1
+    #     #onehot = Variable(onehot, volatile=True)
+    #     #inputs = self.embed(onehot)
 
-        hx, cx = states
-        hx, cx = hx[0], cx[0]
+    #     hx, cx = states
+    #     hx, cx = hx[0], cx[0]
 
-        batch_size = features_global.size(0)
-        if hx.size(0) != batch_size:
-            hx = hx[:batch_size]
-            cx = cx[:batch_size]
+    #     batch_size = features_global.size(0)
+    #     if hx.size(0) != batch_size:
+    #         hx = hx[:batch_size]
+    #         cx = cx[:batch_size]
 
-        for i in range(lengths[0]):
-            inputs = torch.cat((inputs, features_global),1)
-            hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
+    #     for i in range(lengths[0]):
+    #         inputs = torch.cat((inputs, features_global),1)
+    #         hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
 
-            combined = torch.cat((hx,cx), 1)
-            outputs = self.fc(combined)
-            tau = 0.5 if adversarial else 1e-5
-            outputs = self.gumbel_sample(outputs, tau=tau)
-            inputs = self.embed(outputs).view(outputs.size(0), -1)
+    #         combined = torch.cat((hx,cx), 1)
+    #         outputs = self.fc(combined)
+    #         tau = 0.5 if adversarial else 1e-5
+    #         outputs = self.gumbel_sample(outputs, tau=tau)
+    #         inputs = self.embed(outputs).view(outputs.size(0), -1)
 
-            hiddens_ctx_tensor[ :, i, :] = combined
-            output_tensor [:,i,:] = outputs
+    #         hiddens_ctx_tensor[ :, i, :] = combined
+    #         output_tensor [:,i,:] = outputs
 
-        output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
-        #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
-        return output_tensor, hiddens_ctx_tensor
+    #     output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
+    #     #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
+    #     return output_tensor, hiddens_ctx_tensor
 
     def gumbel_sample(self,input, tau):
         noise = torch.rand(input.size()).cuda()

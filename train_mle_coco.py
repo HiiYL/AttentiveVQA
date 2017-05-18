@@ -52,9 +52,13 @@ def run(save_path, args):
     train_data_loader = get_loader("train", question_vocab, ans_vocab,
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
-    # val_data_loader = get_loader("val", vocab, 
-    #                          test_transform, 1,
+    # test_data_loader = get_loader("test", question_vocab, ans_vocab,
+    #                          train_transform, args.batch_size,
     #                          shuffle=False, num_workers=args.num_workers)
+
+    val_data_loader = get_loader("val", question_vocab, ans_vocab,
+                             train_transform, args.val_batch_size,
+                             shuffle=False, num_workers=args.num_workers)
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
@@ -74,8 +78,8 @@ def run(save_path, args):
     
     state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
-    val_state = (Variable(torch.zeros(args.num_layers, 1, args.hidden_size)),
-     Variable(torch.zeros(args.num_layers, 1, args.hidden_size)))
+    val_state = (Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)),
+     Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)))
 
     y_onehot = torch.FloatTensor(args.batch_size, 20,len(question_vocab))
 
@@ -101,7 +105,7 @@ def run(save_path, args):
     total_iterations = 0
 
     for epoch in range(args.num_epochs):
-        for i, (images, captions, lengths, img_id, ans) in enumerate(train_data_loader):
+        for i, (images, captions, lengths, ann_id, ans) in enumerate(train_data_loader):
             # Set mini-batch dataset
             images = Variable(images)
             captions = Variable(captions)
@@ -130,7 +134,8 @@ def run(save_path, args):
             optimizer.step()
 
 
-            if total_iterations % 100 == 0:
+
+            if total_iterations % 1000 == 0:
                 netG.eval()
                 print("")
                 eval_input = (Variable(features_g.data, volatile=True), Variable(features_l.data, volatile=True))
@@ -152,13 +157,13 @@ def run(save_path, args):
                 outputs = outputs.cpu().data.numpy().squeeze().tolist()
                 
                 sampled_captions = ""
-                for i in range(10):
-                    if i > 1:
+                for index in range(10):
+                    if index > 1:
                         break
-                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[i])
+                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[index])
                     sampled_captions +=  "[Q]{} \n".format(sampled_caption)
-                    sampled_captions += ("[A]{} \n".format(ans_vocab.idx2word[ans[i]]))
-                    sampled_captions += ("[P]{} \n\n".format(ans_vocab.idx2word[outputs[i]]))
+                    sampled_captions += ("[A]{} \n".format(ans_vocab.idx2word[ans[index]]))
+                    sampled_captions += ("[P]{} \n\n".format(ans_vocab.idx2word[outputs[index]]))
 
                 print(sampled_captions)
                 netG.train()
@@ -182,102 +187,113 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            # if (total_iterations+1) % args.save_step == 0:
-            #     validate(encoder, netG, val_data_loader, val_state, criterion, vocab, total_iterations)
+            # if total_iterations % 1 == 0:
+            #     export(encoder, netG, test_data_loader,y_onehot, state, criterion,
+            #      question_vocab, ans_vocab, total_iterations, total_step)
+
+            if (total_iterations+1) % args.val_step == 0:
+                validate(encoder, netG, val_data_loader, y_onehot,
+                 val_state, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
 
             total_iterations += 1
 
 
+def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
+ question_vocab,ans_vocab, total_iterations, total_step, save_path):
+    netG.eval()
+    encoder.eval()
+    total_validation_loss = 0
 
-# def validate(encoder, netG, val_data_loader, state, criterion, vocab, total_iterations):
-#     ### MS COCO Eval code prepation
-#     ## set up file names and pathes
-#     dataDir='data/coco'
-#     logDir=save_path
-#     dataType='val2014'
-#     algName = 'fakecap'
-#     annFile='%s/captions_%s_karpathy_split.json'%(dataDir,dataType)
-#     subtypes=['results', 'evalImgs', 'eval']
-#     [resFile, evalImgsFile, evalFile]= \
-#     ['%s/captions_%s_%s_%s.json'%(logDir,dataType,algName,subtype) for subtype in subtypes]
-#     ###
+    responses = []
+    unk_idx = ans_vocab.word2idx['<unk>']
+    for i, (images, captions, lengths, ann_id, ans) in enumerate(val_data_loader):
+        # Set mini-batch dataset
+        images = Variable(images)
+        captions = Variable(captions)
+        ans = Variable(torch.LongTensor(ans))
+        if torch.cuda.is_available():
+            images = images.cuda()
+            captions = captions.cuda()
+            ans = ans.cuda()
+
+        y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
+        y_onehot.zero_()
+        y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
+        y_v = Variable(y_onehot)
+
+        netG.zero_grad()
+        inputs = Variable(images.data, volatile=True)
+        features = encoder(inputs)
+        features_g, features_l = netG.encode_fc(features)
+        outputs = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
+        mle_loss = criterion(outputs, ans)
+
+        #outputs = torch.max(outputs,1)[1]
+        outputs = torch.topk(outputs, 2, 1)[1]
+        outputs = outputs.cpu().data.numpy().squeeze().tolist()
+
+        for index in range(inputs.size(0)):
+            candidates = outputs[index]
+            answer = candidates[1] if (candidates[0] == unk_idx) else candidates[0]
+            answer = ans_vocab.idx2word[answer]
+            responses.append({"answer":answer, "question_id": ann_id[index]})
+
+        total_validation_loss += mle_loss.data[0]
+
+        # Print log info
+        if i % args.log_step == 0:
+            print('Step [%d/%d] Val_Loss: %5.4f, Val_Perplexity: %5.4f'
+                  %(i, len(val_data_loader),  mle_loss.data[0], np.exp(mle_loss.data[0])))
+
+    average_validation_loss = total_validation_loss / len(val_data_loader)
+    log_value('Val_Loss', average_validation_loss, total_iterations)
+
+    json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(total_iterations))
+    json.dump(responses, open(json_save_dir, "w"))
+
+    netG.train()
+    encoder.train()
+   
+
+def export(encoder, netG, test_data_loader,y_onehot, state, criterion, question_vocab, ans_vocab, total_iterations, total_step):
+    netG.eval()
+    encoder.eval()
+
+    responses = []
+    for i, (images, captions, lengths, ann_id) in enumerate(test_data_loader):
+        # Set mini-batch dataset
+        images = Variable(images)
+        captions = Variable(captions)
+        if torch.cuda.is_available():
+            images = images.cuda()
+            captions = captions.cuda()
+
+        y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
+        y_onehot.zero_()
+        y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
+        y_v = Variable(y_onehot)
+
+        netG.zero_grad()
+        inputs = Variable(images.data, volatile=True)
+        features = encoder(inputs)
+        features_g, features_l = netG.encode_fc(features)
+        outputs = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
+        outputs = torch.max(outputs,1)[1]
+        outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
 
-#     print('validating...')
-#     netG.eval()
-#     encoder.eval()
+        for index in range(64):
+            responses.append({"answer":ans_vocab.idx2word[outputs[index]], "question_id": ann_id})
+        # Print log info
+        if i % args.log_step == 0:
+            print('Step [%d/%d] Exporting....'
+                  %(i, total_step))
 
-#     for parameter in encoder.parameters():
-#         parameter.requires_grad=False
-#     for parameter in netG.parameters():
-#         parameter.requires_grad=False
-
-
-
-#     val_json = []
-#     total_val_step = len(val_data_loader)
-#     for i, (images, captions, lengths, img_id) in enumerate(val_data_loader):
-#         images = Variable(images, volatile=True)
-#         captions = Variable(captions, volatile=True)
-#         if torch.cuda.is_available():
-#             images = images.cuda()
-#             captions = captions.cuda()
-#         targets, batch_sizes = pack_padded_sequence(captions, lengths, batch_first=True)
-
-#         # Forward, Backward and Optimize
-#         features = encoder(images)
-#         features_g, features_l = netG.encode_fc(features)
-
-#         sampled_ids_list, terminated_confidences = netG.beamSearch((features_g, features_l), state, n=3, diverse_gamma=0.0)
-#         sampled_ids_list = np.array([ sampled_ids.cpu().data.numpy() for sampled_ids in sampled_ids_list ])
-
-#         max_index = np.argmax(terminated_confidences)
-#         #print(max_index)
-#         sampled_ids = sampled_ids_list[max_index]
-
-#         sampled_caption = []
-#         for word_id in sampled_ids:
-#             word = vocab.idx2word[word_id]
-#             if word == '<end>' or word == '<pad>':
-#                 break
-#             if word != '<start>':
-#                 sampled_caption.append(word)
-
-#         sentence = ' '.join(sampled_caption)
-#         item_json = {"image_id": img_id[0], "caption": sentence}
-#         val_json.append(item_json)
-
-#         # # Print log info
-#         if i % (args.log_step * 10) == 0:
-#            print('[%d/%d] - Running model on validation set....'
-#                  %(i, total_val_step))
+    json.dump(responses, open("answers_vqa.json", "w"))
+    netG.train()
+    encoder.train()    
 
 
-#     path, file = os.path.split(resFile)
-
-#     export_filename = '{}/{}_{}'.format(path, total_iterations, file)
-#     print("Exporting to... {}".format(export_filename))
-#     with open(export_filename, 'w') as outfile:
-#         json.dump(val_json, outfile)
-
-#     print("calculating metrics...")
-#     coco = COCO(annFile)
-#     cocoRes = coco.loadRes(export_filename)
-#     cocoEval = COCOEvalCap(coco, cocoRes)
-#     cocoEval.params['image_id'] = cocoRes.getImgIds()
-#     cocoEval.evaluate()
-
-#     for metric, score in cocoEval.eval.items():
-#         log_value(metric, score, total_iterations)
-#         print '%s: %.3f'%(metric, score)
-
-#     netG.train()
-#     encoder.train()
-#     for parameter in encoder.parameters():
-#         parameter.requires_grad=True
-#     for parameter in netG.parameters():
-#         parameter.requires_grad=True
-                
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/' ,
@@ -297,7 +313,9 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=8856,
+    parser.add_argument('--save_step', type=int , default=10000,
+                        help='step size for saving trained models')
+    parser.add_argument('--val_step', type=int , default=10000,
                         help='step size for saving trained models')
     
     # Model parameters
@@ -314,8 +332,9 @@ if __name__ == '__main__':
     
     parser.add_argument('--num_epochs', type=int, default=500)
     parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--num_workers', type=int, default=2)
-    parser.add_argument('--learning_rate', type=float, default=4e-4)
+    parser.add_argument('--val_batch_size', type=int, default=256)
+    parser.add_argument('--num_workers', type=int, default=8)
+    parser.add_argument('--learning_rate', type=float, default=5e-4)
     args = parser.parse_args()
     print(args)
     if not os.path.exists("logs"):
