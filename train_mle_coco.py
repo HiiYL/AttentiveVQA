@@ -228,14 +228,14 @@ def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
         outputs = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
         mle_loss = criterion(outputs, ans)
 
-        #outputs = torch.max(outputs,1)[1]
-        outputs = torch.topk(outputs, 2, 1)[1]
+        outputs = torch.max(outputs,1)[1]
+        #outputs = torch.topk(outputs, 2, 1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
         for index in range(inputs.size(0)):
-            candidates = outputs[index]
-            answer = candidates[1] if (candidates[0] == unk_idx) else candidates[0]
-            answer = ans_vocab.idx2word[answer]
+            #candidates = 
+            #answer = candidates[1] if (candidates[0] == unk_idx) else candidates[0]
+            answer = ans_vocab.idx2word[outputs[index]]
             responses.append({"answer":answer, "question_id": ann_id[index]})
 
         total_validation_loss += mle_loss.data[0]
