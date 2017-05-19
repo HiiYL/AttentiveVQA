@@ -35,7 +35,6 @@ def run(save_path, args):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
-
     test_transform = transforms.Compose([
         transforms.Scale((299,299)),
         transforms.ToTensor(),
@@ -136,8 +135,6 @@ def run(save_path, args):
             mle_loss.backward()
             torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
             optimizer.step()
-
-
 
             if total_iterations % 1000 == 0:
                 netG.eval()
@@ -347,7 +344,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str)
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--batch_size', type=int, default=80)
     parser.add_argument('--val_batch_size', type=int, default=256)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=5e-4)

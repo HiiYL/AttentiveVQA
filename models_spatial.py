@@ -177,8 +177,9 @@ class G_Spatial(nn.Module):
         # Add sentinel column to feature
         features_with_sentinel = torch.cat((features, sentinel.unsqueeze(1)),1)
         # Calculate attention with sentinel
-        z_t  = F.tanh(self.hidden_transform_gate(hy) + self.input_transform_gate(inputs))
-        st_t = F.tanh(self.hidden_transform_gate(hy) + self.sentinel_transform_gate(sentinel))
+        h_t  = self.hidden_transform_gate(hy)
+        z_t  = F.tanh( h_t + self.input_transform_gate(inputs))
+        st_t = F.tanh( h_t + self.sentinel_transform_gate(sentinel))
 
         visual_atten   = self.attn_visual(z_t)
         sentinel_atten = self.attn_sentinel(st_t)
@@ -232,7 +233,6 @@ class G_Spatial(nn.Module):
             context_tensor[ :, i, :] = cx
 
             skip = 2
-
             if i >= skip and (i % (skip + 1) == 0):
                 hx = hx + hiddens_tensor[:, i - skip, :]
                 cx = cx + context_tensor[:, i - skip, :]
@@ -243,7 +243,7 @@ class G_Spatial(nn.Module):
         combined = [ results_tensor[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
         combined = torch.cat(combined, 0)
         outputs = self.fc(combined)
-        return outputs#, hiddens_tensor
+        return outputs
 
     # def _forward_free_cell(self, features, lengths, states, adversarial=False):
     #     output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
