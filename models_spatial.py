@@ -212,7 +212,8 @@ class G_Spatial(nn.Module):
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
         embeddings = torch.cat((features_global.unsqueeze(1), embeddings), 1)
-        hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
+        hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
+        context_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
         hx, cx = states
         hx, cx = hx[0], cx[0]
 
@@ -226,10 +227,20 @@ class G_Spatial(nn.Module):
             inputs = torch.cat((inputs, features_global),1)
 
             hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
-            hiddens_ctx_tensor[ :, i, :] = torch.cat((hx,cx),1)
+
+            hiddens_tensor[ :, i, :] = hx
+            context_tensor[ :, i, :] = cx
+
+            skip = 2
+
+            if i >= skip and (i % (skip + 1) == 0):
+                hx = hx + hiddens_tensor[:, i - skip, :]
+                cx = cx + context_tensor[:, i - skip, :]
 
         #(64L, 16L, 1024L)
-        combined = [ hiddens_ctx_tensor[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
+        results_tensor = torch.cat((hiddens_tensor, context_tensor), 2)
+
+        combined = [ results_tensor[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
         combined = torch.cat(combined, 0)
         outputs = self.fc(combined)
         return outputs#, hiddens_tensor

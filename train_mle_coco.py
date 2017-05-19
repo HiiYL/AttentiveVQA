@@ -48,17 +48,20 @@ def run(save_path, args):
 
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
+
+    # with open("data/val_ans_vocab.pkl", 'rb') asf:
+    #     val_ans_vocab = pickle.load(f)
     
-    train_data_loader = get_loader("train", question_vocab, ans_vocab,
+    train_data_loader = get_loader("train+val", question_vocab, ans_vocab,
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
-    # test_data_loader = get_loader("test", question_vocab, ans_vocab,
-    #                          train_transform, args.batch_size,
-    #                          shuffle=False, num_workers=args.num_workers)
-
-    val_data_loader = get_loader("val", question_vocab, ans_vocab,
+    test_data_loader = get_loader("test", question_vocab, ans_vocab,
                              train_transform, args.val_batch_size,
                              shuffle=False, num_workers=args.num_workers)
+
+    # val_data_loader = get_loader("val", question_vocab, ans_vocab,
+    #                          train_transform, args.val_batch_size,
+    #                          shuffle=False, num_workers=args.num_workers)
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
@@ -123,8 +126,9 @@ def run(save_path, args):
             y_v = Variable(y_onehot)
 
             netG.zero_grad()
-            inputs = Variable(images.data, volatile=True)
-            features = Variable(encoder(inputs).data)
+            #inputs = Variable(images.data, volatile=True)
+            #features = Variable(encoder(inputs).data)
+            features = images
             features_g, features_l = netG.encode_fc(features)
             out = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
 
@@ -187,13 +191,13 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            # if total_iterations % 1 == 0:
-            #     export(encoder, netG, test_data_loader,y_onehot, state, criterion,
-            #      question_vocab, ans_vocab, total_iterations, total_step)
-
-            if (total_iterations+1) % args.val_step == 0:
-                validate(encoder, netG, val_data_loader, y_onehot,
+            if (total_iterations+1) % args.save_step == 0:
+                export(encoder, netG, test_data_loader, y_onehot,
                  val_state, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
+
+            # if (total_iterations+1) % args.val_step == 0:
+            #     validate(encoder, netG, val_data_loader, y_onehot,
+            #      val_state, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
 
             total_iterations += 1
 
@@ -236,6 +240,7 @@ def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
             #candidates = 
             #answer = candidates[1] if (candidates[0] == unk_idx) else candidates[0]
             answer = ans_vocab.idx2word[outputs[index]]
+
             responses.append({"answer":answer, "question_id": ann_id[index]})
 
         total_validation_loss += mle_loss.data[0]
@@ -255,12 +260,15 @@ def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
     encoder.train()
    
 
-def export(encoder, netG, test_data_loader,y_onehot, state, criterion, question_vocab, ans_vocab, total_iterations, total_step):
+def export(encoder, netG, data_loader,y_onehot, state, criterion,
+    question_vocab,ans_vocab, total_iterations, total_step, save_path):
+
     netG.eval()
     encoder.eval()
+    total_validation_loss = 0
 
     responses = []
-    for i, (images, captions, lengths, ann_id) in enumerate(test_data_loader):
+    for i, (images, captions, lengths, ann_id) in enumerate(data_loader):
         # Set mini-batch dataset
         images = Variable(images)
         captions = Variable(captions)
@@ -274,24 +282,32 @@ def export(encoder, netG, test_data_loader,y_onehot, state, criterion, question_
         y_v = Variable(y_onehot)
 
         netG.zero_grad()
-        inputs = Variable(images.data, volatile=True)
-        features = encoder(inputs)
+        #inputs = Variable(images.data, volatile=True)
+        #features = encoder(inputs)
+        features = images
         features_g, features_l = netG.encode_fc(features)
         outputs = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
         outputs = torch.max(outputs,1)[1]
+        #outputs = torch.topk(outputs, 2, 1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
+        for index in range(images.size(0)):
+            answer = ans_vocab.idx2word[outputs[index]]
+            responses.append({"answer":answer, "question_id": ann_id[index]})
 
-        for index in range(64):
-            responses.append({"answer":ans_vocab.idx2word[outputs[index]], "question_id": ann_id})
         # Print log info
         if i % args.log_step == 0:
-            print('Step [%d/%d] Exporting....'
-                  %(i, total_step))
+            print('Step [%d/%d] Exporting  ... '
+                  %(i, len(data_loader)))
 
-    json.dump(responses, open("answers_vqa.json", "w"))
+    average_validation_loss = total_validation_loss / len(data_loader)
+    log_value('Val_Loss', average_validation_loss, total_iterations)
+
+    json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(total_iterations))
+    json.dump(responses, open(json_save_dir, "w"))
+
     netG.train()
-    encoder.train()    
+    encoder.train()
 
 
 if __name__ == '__main__':
