@@ -124,6 +124,96 @@ class EncoderFC(nn.Module):
 
         return x_global, x_local
 
+class LSTMAttentive(nn.Module):
+    def __init__(self, embed_size, hidden_size):
+        super(LSTMAttentive, self).__init__()
+
+        self.sentinel_igate = nn.Linear(hidden_size, hidden_size)
+        self.sentinel_hgate = nn.Linear(hidden_size, hidden_size)
+
+        self.sentinel_transform_gate = nn.Linear(hidden_size, hidden_size)
+        self.hidden_transform_gate   = nn.Linear(hidden_size, hidden_size)
+
+        self.v_transform = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.Tanh(),
+            nn.Dropout(0.5)
+        )
+
+        self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
+
+        self.attn_sentinel = nn.Linear( hidden_size, 1)
+        self.attn_visual   = nn.Linear( hidden_size, 1)
+
+        self._initialize_weights()
+
+    def applyLinearOn3DMatrix(self, layer_input, layer):
+        batch_size, timestep, size = layer_input.size()
+        out = layer(layer_input.view(-1, size))
+        out = out.view(batch_size, timestep, -1)
+        return out
+
+    def forward(self, inputs, hx, cx, features):
+        hy, cy = self.lstm_cell(inputs, (hx,cx))
+
+        sentinel_i, sentinel_h = self.sentinel_igate(inputs), self.sentinel_hgate(hx)
+        sentinel_gate = F.sigmoid(sentinel_i + sentinel_h)
+        sentinel = sentinel_gate * F.tanh(cy)
+
+        # Add sentinel column to feature
+        features_with_sentinel = torch.cat((features, sentinel.unsqueeze(1)),1)
+        # Calculate attention with sentinel
+        h_t   = self.hidden_transform_gate(hy)
+        s_t   = self.sentinel_transform_gate(sentinel)
+        z_h_t = h_t.unsqueeze(1).expand_as(features)
+
+        v    = self.applyLinearOn3DMatrix(features, self.v_transform)
+        z_t  = F.tanh( v   + z_h_t )
+        st_t = F.tanh( h_t + s_t   )
+
+        base_atten     = self.applyLinearOn3DMatrix(z_t, self.attn_visual ).squeeze(2)
+        sentinel_atten = self.attn_sentinel(st_t)
+
+        attn_weights = F.softmax(torch.cat((base_atten, sentinel_atten), 1))
+        visual_cy    = torch.bmm(attn_weights.unsqueeze(1), features_with_sentinel).squeeze(1)
+
+        beta   = attn_weights[:,-1].unsqueeze(1).expand_as(sentinel)
+        cy_hat = beta * sentinel + (1 - beta) * visual_cy
+        
+        return hy, cy_hat
+
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                kaiming_uniform(m.weight.data)
+                m.bias.data.zero_()
+
+
+class LSTMSimple(nn.Module):
+    def __init__(self, embed_size, hidden_size):
+        super(LSTMSimple, self).__init__()
+        self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
+        self.attn = nn.Linear( hidden_size * 2, 64)
+
+        self._initialize_weights()
+
+    def forward(self, inputs, hx, cx, features):
+        hy, cy = self.lstm_cell(inputs, (hx,cx))
+
+        attn_weights = F.softmax(self.attn(torch.cat((inputs, hy), 1)))
+        visual_cy    = torch.bmm(attn_weights.unsqueeze(1), features).squeeze(1)
+
+        cy = visual_cy + cy
+        
+        return hy, cy
+
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                kaiming_uniform(m.weight.data)
+                m.bias.data.zero_()
 
 class G_Spatial(nn.Module):
     def __init__(self, embed_size, hidden_size, question_vocab, ans_vocab, num_layers):
@@ -136,24 +226,31 @@ class G_Spatial(nn.Module):
         self.hidden_size = hidden_size
         self.embed_size = embed_size
 
-        self.embed = nn.Linear(len(question_vocab), embed_size)
-        self.fc = nn.Linear(hidden_size * 2, len(ans_vocab))
-        self.v2h = nn.Linear(embed_size * 2, embed_size)
+        self.embed = nn.Sequential(
+            nn.Linear(len(question_vocab), embed_size),
+            nn.Dropout(0.5),
+            nn.ReLU()
+        )
+        self.visual_embed = nn.Sequential(
+            nn.Linear( embed_size * 2, embed_size ),
+            nn.Dropout(0.5),
+            nn.ReLU()
+        )
 
-        self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
-        self.attn_visual = nn.Linear( hidden_size, 64)
-        self.attn_sentinel = nn.Linear( hidden_size, 1)
+        self.lstm  = LSTMSimple(embed_size, hidden_size)
 
+        self.fc  = nn.Sequential(
+            nn.Linear(hidden_size * 2,hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(hidden_size * 2,hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(hidden_size * 2, len(ans_vocab))
+        )
         self.log_softmax = nn.LogSoftmax()
         self.dropout = nn.Dropout()
         self.relu = nn.ReLU()
-
-        self.sentinel_igate = nn.Linear(hidden_size, hidden_size)
-        self.sentinel_hgate = nn.Linear(hidden_size, hidden_size)
-
-        self.sentinel_transform_gate = nn.Linear(hidden_size, hidden_size)
-        self.hidden_transform_gate = nn.Linear(hidden_size, hidden_size)
-        self.input_transform_gate = nn.Linear(hidden_size, hidden_size)
 
         self._initialize_weights()
 
@@ -163,35 +260,6 @@ class G_Spatial(nn.Module):
                 kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
 
-
-    def lstm_attention(self, inputs, hx,cx, features):
-        inputs = self.v2h(inputs)
-        inputs = self.dropout(inputs)
-
-        hy, cy = self.lstm_cell(inputs, (hx,cx))
-
-        sentinel_i, sentinel_h = self.sentinel_igate(inputs), self.sentinel_hgate(hx)
-        sentinel_gate = F.sigmoid(sentinel_i + sentinel_h)
-        sentinel = sentinel_gate * F.tanh(cy)
-
-        # Add sentinel column to feature
-        features_with_sentinel = torch.cat((features, sentinel.unsqueeze(1)),1)
-        # Calculate attention with sentinel
-        h_t  = self.hidden_transform_gate(hy)
-        z_t  = F.tanh( h_t + self.input_transform_gate(inputs))
-        st_t = F.tanh( h_t + self.sentinel_transform_gate(sentinel))
-
-        visual_atten   = self.attn_visual(z_t)
-        sentinel_atten = self.attn_sentinel(st_t)
-        
-        attn_weights = F.softmax(torch.cat((visual_atten, sentinel_atten), 1))
-        visual_cy = torch.bmm(attn_weights.unsqueeze(1), features_with_sentinel).squeeze(1)
-
-        beta = attn_weights[:,-1].unsqueeze(1).expand_as(sentinel)
-        cy_hat = beta * sentinel + (1 - beta) * visual_cy
-        
-        return hy, cy_hat
-
          
     def forward(self, features, captions, lengths, state, teacher_forced=True):
         """Decode image feature vectors and generates captions."""
@@ -200,7 +268,7 @@ class G_Spatial(nn.Module):
         else:
             return self._forward_free_cell(features, lengths, state)
 
-    def _forward_forced_cell(self, features, captions, lengths, states):
+    def _forward_forced_cell(self, features, captions, lengths, states, skip=2):
         features_global, features_local = features
         if isinstance(captions, tuple):
             captions, batch_sizes = captions
@@ -213,12 +281,13 @@ class G_Spatial(nn.Module):
             embeddings = embeddings.view(batch_size, caption_length, -1)
 
         embeddings = torch.cat((features_global.unsqueeze(1), embeddings), 1)
+        batch_size = features_global.size(0)
+
         hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
         context_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
         hx, cx = states
         hx, cx = hx[0], cx[0]
 
-        batch_size = features_global.size(0)
         if hx.size(0) != batch_size:
             hx = hx[:batch_size]
             cx = cx[:batch_size]
@@ -227,12 +296,13 @@ class G_Spatial(nn.Module):
             inputs = embeddings[:,i,:]
             inputs = torch.cat((inputs, features_global),1)
 
-            hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
+            inputs = self.visual_embed(inputs)
+
+            hx, cx = self.lstm( inputs, hx, cx, features_local)
 
             hiddens_tensor[ :, i, :] = hx
             context_tensor[ :, i, :] = cx
 
-            skip = 2
             if i >= skip and (i % (skip + 1) == 0):
                 hx = hx + hiddens_tensor[:, i - skip, :]
                 cx = cx + context_tensor[:, i - skip, :]
@@ -245,41 +315,41 @@ class G_Spatial(nn.Module):
         outputs = self.fc(combined)
         return outputs
 
-    # def _forward_free_cell(self, features, lengths, states, adversarial=False):
-    #     output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
-    #     hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
+    def _forward_free_cell(self, features, lengths, states):
+        output_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.vocab_size))
+        hiddens_ctx_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size * 2))
 
-    #     features_global, features_local = features
-    #     inputs = features_global
-    #     #onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
-    #     #onehot[:,0] = 1
-    #     #onehot = Variable(onehot, volatile=True)
-    #     #inputs = self.embed(onehot)
+        features_global, features_local = features
+        inputs = features_global
+        #onehot = torch.cuda.FloatTensor(features.size(0), self.vocab_size).fill_(0)
+        #onehot[:,0] = 1
+        #onehot = Variable(onehot, volatile=True)
+        #inputs = self.embed(onehot)
 
-    #     hx, cx = states
-    #     hx, cx = hx[0], cx[0]
+        hx, cx = states
+        hx, cx = hx[0], cx[0]
 
-    #     batch_size = features_global.size(0)
-    #     if hx.size(0) != batch_size:
-    #         hx = hx[:batch_size]
-    #         cx = cx[:batch_size]
+        batch_size = features_global.size(0)
+        if hx.size(0) != batch_size:
+            hx = hx[:batch_size]
+            cx = cx[:batch_size]
 
-    #     for i in range(lengths[0]):
-    #         inputs = torch.cat((inputs, features_global),1)
-    #         hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
+        for i in range(lengths[0]):
+            inputs = torch.cat((inputs, features_global),1)
+            hx, cx = self.lstm_attention(inputs, hx,cx, features_local)
 
-    #         combined = torch.cat((hx,cx), 1)
-    #         outputs = self.fc(combined)
-    #         tau = 0.5 if adversarial else 1e-5
-    #         outputs = self.gumbel_sample(outputs, tau=tau)
-    #         inputs = self.embed(outputs).view(outputs.size(0), -1)
+            combined = torch.cat((hx,cx), 1)
+            outputs = self.fc(combined)
+            tau = 0.5
+            outputs = self.gumbel_sample(outputs, tau=tau)
+            inputs = self.embed(outputs).view(outputs.size(0), -1)
 
-    #         hiddens_ctx_tensor[ :, i, :] = combined
-    #         output_tensor [:,i,:] = outputs
+            hiddens_ctx_tensor[ :, i, :] = combined
+            output_tensor [:,i,:] = outputs
 
-    #     output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
-    #     #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
-    #     return output_tensor, hiddens_ctx_tensor
+        output_tensor, _ = pack_padded_sequence(output_tensor, lengths, batch_first=True)
+        #hiddens_tensor, _ = pack_padded_sequence(hiddens_tensor, lengths, batch_first=True)
+        return output_tensor, hiddens_ctx_tensor
 
     def gumbel_sample(self,input, tau):
         noise = torch.rand(input.size()).cuda()

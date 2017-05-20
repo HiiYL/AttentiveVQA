@@ -23,7 +23,17 @@ import json
 
 from tensorboard_logger import configure, log_value
 
+
+
+from tools.PythonHelperTools.vqaTools.vqa import VQA
+from tools.PythonEvaluationTools.vqaEvaluation.vqaEval import VQAEval
+import json
+import random
+import os
+
 def run(save_path, args):
+    torch.manual_seed(args.seed)
+
     # Create model directory
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
@@ -51,16 +61,17 @@ def run(save_path, args):
     # with open("data/val_ans_vocab.pkl", 'rb') asf:
     #     val_ans_vocab = pickle.load(f)
     
-    train_data_loader = get_loader("train+val", question_vocab, ans_vocab,
+    train_data_loader = get_loader("train", question_vocab, ans_vocab,
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
-    test_data_loader = get_loader("test", question_vocab, ans_vocab,
-                             train_transform, args.val_batch_size,
-                             shuffle=False, num_workers=args.num_workers)
 
-    # val_data_loader = get_loader("val", question_vocab, ans_vocab,
+    # test_data_loader = get_loader("test", question_vocab, ans_vocab,
     #                          train_transform, args.val_batch_size,
     #                          shuffle=False, num_workers=args.num_workers)
+
+    val_data_loader = get_loader("val", question_vocab, ans_vocab,
+                             train_transform, args.val_batch_size,
+                             shuffle=False, num_workers=args.num_workers)
 
     # Build the models
     encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
@@ -188,8 +199,8 @@ def run(save_path, args):
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
-            if (total_iterations+1) % args.save_step == 0:
-                export(encoder, netG, test_data_loader, y_onehot,
+            if (total_iterations+1) % 1 == 0:
+                export(encoder, netG, val_data_loader, y_onehot,
                  val_state, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
 
             # if (total_iterations+1) % args.val_step == 0:
@@ -262,7 +273,6 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
 
     netG.eval()
     encoder.eval()
-    total_validation_loss = 0
 
     responses = []
     for i, (images, captions, lengths, ann_id) in enumerate(data_loader):
@@ -285,7 +295,6 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
         features_g, features_l = netG.encode_fc(features)
         outputs = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
         outputs = torch.max(outputs,1)[1]
-        #outputs = torch.topk(outputs, 2, 1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
         for index in range(images.size(0)):
@@ -297,11 +306,28 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
             print('Step [%d/%d] Exporting  ... '
                   %(i, len(data_loader)))
 
-    average_validation_loss = total_validation_loss / len(data_loader)
-    log_value('Val_Loss', average_validation_loss, total_iterations)
-
     json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(total_iterations))
     json.dump(responses, open(json_save_dir, "w"))
+
+    dataDir = 'data'
+
+    taskType    ='OpenEnded'
+    dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
+    dataSubType ='val2014'
+    annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
+    quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
+    imgDir      ='%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
+
+    resFile = json_save_dir
+
+    vqa = VQA(annFile, quesFile)
+    vqaRes = vqa.loadRes(resFile, quesFile)
+    vqaEval = VQAEval(vqa, vqaRes, n=2)
+    vqaEval.evaluate()
+
+    print "\n"
+    print "Overall Accuracy is: %.02f\n" %(vqaEval.accuracy['overall'])
+    log_value('Val_Acc', vqaEval.accuracy['overall'], total_iterations)
 
     netG.train()
     encoder.train()
@@ -344,10 +370,11 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str)
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=80)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--val_batch_size', type=int, default=256)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=5e-4)
+    parser.add_argument('--seed', type=int, default=123)
     args = parser.parse_args()
     print(args)
     if not os.path.exists("logs"):

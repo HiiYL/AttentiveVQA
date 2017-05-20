@@ -89,11 +89,18 @@ class CocoTestDataset(data.Dataset):
             vocab: vocabulary wrapper.
             transform: image transformer.
         """
-        self.root = "data/Images/mscoco/test2015"
-        self.coco = COCO("data/vqa_test.json")
+        if mode == "test":
+            self.root = "data/Images/mscoco/test2015"
+            self.coco = COCO("data/vqa_test.json")
+            self.pickle_feature_path = "data/features_test/"
+        else:
+            self.root = "data/Images/mscoco/merged2014"
+            self.coco = COCO("data/vqa_val.json")
+            self.pickle_feature_path = "data/features/"
+
         self.ids = list(self.coco.anns.keys())
         self.question_vocab = question_vocab
-        self.pickle_feature_path = "data/features_test/"
+
         self.ans_vocab = ans_vocab
         self.transform = transform
 
@@ -240,18 +247,19 @@ def get_loader(mode, question_vocab,ans_vocab, transform, batch_size, shuffle, n
     """Returns torch.utils.data.DataLoader for custom coco dataset."""
     print(mode)
     # COCO caption dataset
-    if mode == "test":
-        coco = CocoTestDataset(mode=mode,
-                       question_vocab=question_vocab,
-                       ans_vocab=ans_vocab,
-                       transform=transform)
-        collate_fn_to_use = collate_fn_test
-    else:    
+    if mode == "train":
         coco = CocoDataset(mode=mode,
                            question_vocab=question_vocab,
                            ans_vocab=ans_vocab,
                            transform=transform)
         collate_fn_to_use = collate_fn_vqa
+    else:
+        coco = CocoTestDataset(mode=mode,
+                       question_vocab=question_vocab,
+                       ans_vocab=ans_vocab,
+                       transform=transform)
+        collate_fn_to_use = collate_fn_test
+
     # elif mode == "val":
     #     coco = CocoValDataset(mode=mode,
     #                        vocab=vocab,
