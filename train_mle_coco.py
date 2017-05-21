@@ -204,70 +204,7 @@ def run(save_path, args):
                 export(encoder, netG, val_data_loader, y_onehot,
                  val_states, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
 
-            # if (total_iterations+1) % args.val_step == 0:
-            #     validate(encoder, netG, val_data_loader, y_onehot,
-            #      val_state, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
-
             total_iterations += 1
-
-
-def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
- question_vocab,ans_vocab, total_iterations, total_step, save_path):
-    netG.eval()
-    #encoder.eval()
-    total_validation_loss = 0
-
-    responses = []
-    unk_idx = ans_vocab.word2idx['<unk>']
-    for i, (images, captions, lengths, ann_id, ans) in enumerate(val_data_loader):
-        # Set mini-batch dataset
-        images = Variable(images)
-        captions = Variable(captions)
-        ans = Variable(torch.LongTensor(ans))
-        if torch.cuda.is_available():
-            images = images.cuda()
-            captions = captions.cuda()
-            ans = ans.cuda()
-
-        y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
-        y_onehot.zero_()
-        y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
-        y_v = Variable(y_onehot)
-
-        netG.zero_grad()
-        inputs = Variable(images.data, volatile=True)
-        features = encoder(inputs)
-        features_g, features_l = netG.encode_fc(features)
-        outputs = netG((features_g, features_l), y_v, lengths, state)
-        mle_loss = criterion(outputs, ans)
-
-        outputs = torch.max(outputs,1)[1]
-        #outputs = torch.topk(outputs, 2, 1)[1]
-        outputs = outputs.cpu().data.numpy().squeeze().tolist()
-
-        for index in range(inputs.size(0)):
-            #candidates = 
-            #answer = candidates[1] if (candidates[0] == unk_idx) else candidates[0]
-            answer = ans_vocab.idx2word[outputs[index]]
-
-            responses.append({"answer":answer, "question_id": ann_id[index]})
-
-        total_validation_loss += mle_loss.data[0]
-
-        # Print log info
-        if i % args.log_step == 0:
-            print('Step [%d/%d] Val_Loss: %5.4f, Val_Perplexity: %5.4f'
-                  %(i, len(val_data_loader),  mle_loss.data[0], np.exp(mle_loss.data[0])))
-
-    average_validation_loss = total_validation_loss / len(val_data_loader)
-    log_value('Val_Loss', average_validation_loss, total_iterations)
-
-    json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(total_iterations))
-    json.dump(responses, open(json_save_dir, "w"))
-
-    netG.train()
-    #encoder.train()
-   
 
 def export(encoder, netG, data_loader,y_onehot, state, criterion,
     question_vocab,ans_vocab, total_iterations, total_step, save_path):
@@ -303,7 +240,7 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
             responses.append({"answer":answer, "question_id": ann_id[index]})
 
         # Print log info
-        if i % args.log_step == 0:
+        if i % ( args.log_step * 10 ) == 0:
             print('Step [%d/%d] Exporting  ... '
                   %(i, len(data_loader)))
 
