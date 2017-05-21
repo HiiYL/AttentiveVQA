@@ -74,6 +74,7 @@ test_images_overlap_count = len(set(image_ids).intersection(set(coco_image_ids))
 assert test_images_uniques_count == test_images_overlap_count \
  , " {} Missing images in test image set".format(abs(test_images_overlap_count - test_images_uniques_count))
 
+
 print("Preparing Answers vocab ... ")
 s = 'ans'
 to_process = train + val
@@ -118,10 +119,14 @@ print("Preparing Questions vocab ... ")
 s = 'question'
 to_process = combined_annotations_without_unk #train_without_unk #+ val
 counter = Counter()
+# max_length = 0
 for i, qa_sample in enumerate(to_process):
     caption = str(qa_sample[s])
     tokens = nltk.tokenize.word_tokenize(caption.lower())
     counter.update(tokens)
+    # if len(tokens) > max_length:
+    #     max_length = len(tokens)
+    #     print(max_length)
 
     if i % 1000 == 0:
         print("[%d/%d] Tokenized the captions." %(i, len(to_process)))
@@ -161,3 +166,17 @@ with open('data/{}_vocab.pkl'.format(s), 'wb') as f:
 # print("{} unique entries in val vocab".format(len(vocab)))
 # with open('data/val_{}_vocab.pkl'.format(s), 'wb') as f:
 #     pickle.dump(vocab, f, 2)
+
+
+chars = string.ascii_lowercase + string.digits + string.punctuation + ' '
+vocab = Vocabulary()
+vocab.add_word('<pad>')
+vocab.add_word('<start>')
+vocab.add_word('<end>')
+vocab.add_word('<unk>')
+# Adds the words to the vocabulary.
+for i, word in enumerate(chars):
+    vocab.add_word(word)
+
+with open('data/ans_vocab_char.pkl'.format(s), 'wb') as f:
+    pickle.dump(vocab, f, 2)

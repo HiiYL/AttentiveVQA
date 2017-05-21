@@ -75,8 +75,8 @@ def run(save_path, args):
 
     # Build the models
     #encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
-    encoder = None
     netG = G_Spatial(args.embed_size, args.hidden_size, question_vocab, ans_vocab, args.num_layers)
+    netG2 = G_Spatial_Adversarial(args.embed_size, args.hidden_size, question_vocab, ans_vocab, args.num_layers)
 
     if args.netG:
         print("[!]loading pretrained netG....")
@@ -90,9 +90,9 @@ def run(save_path, args):
 
     criterion = nn.CrossEntropyLoss()
     
-    states = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
+    state = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
-    val_states = (Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)),
+    val_state = (Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)))
 
     y_onehot = torch.FloatTensor(args.batch_size, 20,len(question_vocab))
@@ -100,14 +100,16 @@ def run(save_path, args):
     if torch.cuda.is_available():
         #encoder = encoder.cuda()
         netG.cuda()
+        netG2.cuda()
         #netD.cuda()
-        states = [s.cuda() for s in states]
-        val_states = [s.cuda() for s in val_states]
+        state = [s.cuda() for s in state]
+        val_state = [s.cuda() for s in val_state]
         criterion = criterion.cuda()
         y_onehot = y_onehot.cuda()
 
     params = [
                 {'params': netG.parameters()},
+                {'params': netG2.parameters()}
                 #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
                 #{'params': encoder.fc.parameters()}
                 
@@ -141,45 +143,49 @@ def run(save_path, args):
             #features = Variable(encoder(inputs).data)
             features = images
             features_g, features_l = netG.encode_fc(features)
-            out = netG(features=(features_g, features_l), captions=y_v, lengths=lengths, states=states)
+            features = netG(features=(features_g, features_l), captions=y_v, lengths=lengths, states=state, returnHidden=True)
+
+            print(out)
+            out = netG(features=features, captions=ans, lengths=lengths, states=state,teacher_forced=True)
+            exit()
 
             mle_loss = criterion(out, ans)
             mle_loss.backward()
             torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
             optimizer.step()
 
-            if total_iterations % 1000 == 0:
-                netG.eval()
-                print("")
-                eval_input = (Variable(features_g.data, volatile=True), Variable(features_l.data, volatile=True))
-                outputs = netG(eval_input, y_v, lengths, states)
+            # if total_iterations % 1000 == 0:
+            #     netG.eval()
+            #     print("")
+            #     eval_input = (Variable(features_g.data, volatile=True), Variable(features_l.data, volatile=True))
+            #     outputs = netG(eval_input, y_v, lengths, state)
 
-                def word_idx_to_sentence(sample):
-                    sampled_caption = []
-                    for word_id in sample:
-                        word = question_vocab.idx2word[word_id]
-                        sampled_caption.append(word)
-                        if word == '<end>':
-                            break
-                    return ' '.join(sampled_caption)
+            #     def word_idx_to_sentence(sample):
+            #         sampled_caption = []
+            #         for word_id in sample:
+            #             word = question_vocab.idx2word[word_id]
+            #             sampled_caption.append(word)
+            #             if word == '<end>':
+            #                 break
+            #         return ' '.join(sampled_caption)
 
-                groundtruth_caption = captions.cpu().data.numpy()
+            #     groundtruth_caption = captions.cpu().data.numpy()
 
-                ans = ans.cpu().data.numpy().tolist()
-                outputs = torch.max(outputs,1)[1]
-                outputs = outputs.cpu().data.numpy().squeeze().tolist()
+            #     ans = ans.cpu().data.numpy().tolist()
+            #     outputs = torch.max(outputs,1)[1]
+            #     outputs = outputs.cpu().data.numpy().squeeze().tolist()
                 
-                sampled_captions = ""
-                for index in range(10):
-                    if index > 1:
-                        break
-                    sampled_caption   = word_idx_to_sentence(groundtruth_caption[index])
-                    sampled_captions +=  "[Q]{} \n".format(sampled_caption)
-                    sampled_captions += ("[A]{} \n".format(ans_vocab.idx2word[ans[index]]))
-                    sampled_captions += ("[P]{} \n\n".format(ans_vocab.idx2word[outputs[index]]))
+            #     sampled_captions = ""
+            #     for index in range(10):
+            #         if index > 1:
+            #             break
+            #         sampled_caption   = word_idx_to_sentence(groundtruth_caption[index])
+            #         sampled_captions +=  "[Q]{} \n".format(sampled_caption)
+            #         sampled_captions += ("[A]{} \n".format(ans_vocab.idx2word[ans[index]]))
+            #         sampled_captions += ("[P]{} \n\n".format(ans_vocab.idx2word[outputs[index]]))
 
-                print(sampled_captions)
-                netG.train()
+            #     print(sampled_captions)
+            #     netG.train()
 
             # Print log info
             if total_iterations % args.log_step == 0:
@@ -191,9 +197,9 @@ def run(save_path, args):
                 torch.save(netG.state_dict(), 
                            os.path.join(save_path, 
                                         'netG-%d-%d.pkl' %(epoch+1, i+1)))
-                #torch.save(encoder.state_dict(), 
-                #           os.path.join(save_path, 
-                #                        'encoder-%d-%d.pkl' %(epoch+1, i+1)))
+                torch.save(encoder.state_dict(), 
+                           os.path.join(save_path, 
+                                        'encoder-%d-%d.pkl' %(epoch+1, i+1)))
 
 
             if total_iterations % args.tb_log_step == 0:
@@ -202,7 +208,7 @@ def run(save_path, args):
 
             if (total_iterations+1) % args.save_step == 0:
                 export(encoder, netG, val_data_loader, y_onehot,
-                 val_states, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
+                 val_state, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
 
             # if (total_iterations+1) % args.val_step == 0:
             #     validate(encoder, netG, val_data_loader, y_onehot,
@@ -214,7 +220,7 @@ def run(save_path, args):
 def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
  question_vocab,ans_vocab, total_iterations, total_step, save_path):
     netG.eval()
-    #encoder.eval()
+    encoder.eval()
     total_validation_loss = 0
 
     responses = []
@@ -238,7 +244,7 @@ def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
         inputs = Variable(images.data, volatile=True)
         features = encoder(inputs)
         features_g, features_l = netG.encode_fc(features)
-        outputs = netG((features_g, features_l), y_v, lengths, state)
+        outputs = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
         mle_loss = criterion(outputs, ans)
 
         outputs = torch.max(outputs,1)[1]
@@ -266,14 +272,14 @@ def validate(encoder, netG, val_data_loader,y_onehot, state, criterion,
     json.dump(responses, open(json_save_dir, "w"))
 
     netG.train()
-    #encoder.train()
+    encoder.train()
    
 
 def export(encoder, netG, data_loader,y_onehot, state, criterion,
     question_vocab,ans_vocab, total_iterations, total_step, save_path):
 
     netG.eval()
-    #encoder.eval()
+    encoder.eval()
 
     responses = []
     for i, (images, captions, lengths, ann_id) in enumerate(data_loader):
@@ -294,7 +300,7 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
         #features = encoder(inputs)
         features = images
         features_g, features_l = netG.encode_fc(features)
-        outputs = netG((features_g, features_l), y_v, lengths, state)
+        outputs = netG((features_g, features_l), y_v, lengths, state, teacher_forced=True)
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
@@ -331,7 +337,7 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
     log_value('Val_Acc', vqaEval.accuracy['overall'], total_iterations)
 
     netG.train()
-    #encoder.train()
+    encoder.train()
 
 
 if __name__ == '__main__':
