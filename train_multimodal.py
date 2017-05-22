@@ -14,16 +14,14 @@ import numpy as np
 import os
 from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
-from models.encoder import EncoderCNN
-from models.classification_models import G_Spatial
+from models.encoder import EncoderCNN, EncoderRNN, EncoderFC, EncoderSkipThought
+from models.classification_models import G_Spatial, MultimodalRNN
 import pickle
 import datetime
 
 import json
 
 from tensorboard_logger import configure, log_value
-
-
 
 from tools.PythonHelperTools.vqaTools.vqa import VQA
 from tools.PythonEvaluationTools.vqaEvaluation.vqaEval import VQAEval
@@ -76,12 +74,16 @@ def run(save_path, args):
     # Build the models
     #encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
     encoder = None
-    netG = G_Spatial(args.embed_size, args.hidden_size, question_vocab, ans_vocab, args.num_layers)
+    encoder_fc = None#EncoderFC(global_only=True)
+    #netG = G_Spatial(args.embed_size, args.hidden_size, question_vocab, ans_vocab, args.num_layers)
+    #netR = EncoderRNN(args.embed_size, args.hidden_size, len(question_vocab), args.num_layers)
+    netR = EncoderSkipThought(question_vocab)
+    netM = MultimodalRNN(len(ans_vocab))
 
-    if args.netG:
-        print("[!]loading pretrained netG....")
-        netG.load_state_dict(torch.load(args.netG))
-        print("Done!")
+    # if args.netG:
+    #     print("[!]loading pretrained netG....")
+    #     netG.load_state_dict(torch.load(args.netG))
+    #     print("Done!")
 
     if args.encoder:
         print("[!]loading pretrained decoder....")
@@ -99,15 +101,19 @@ def run(save_path, args):
 
     if torch.cuda.is_available():
         #encoder = encoder.cuda()
-        netG.cuda()
-        #netD.cuda()
+        #netG.cuda()
+        netR.cuda()
+        netM.cuda()
+        #encoder_fc.cuda()
         states = [s.cuda() for s in states]
         val_states = [s.cuda() for s in val_states]
         criterion = criterion.cuda()
         y_onehot = y_onehot.cuda()
 
     params = [
-                {'params': netG.parameters()},
+                {'params': netR.parameters()},
+                {'params': netM.parameters()},
+                #{'params': encoder_fc.parameters()}
                 #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
                 #{'params': encoder.fc.parameters()}
                 
@@ -131,58 +137,30 @@ def run(save_path, args):
 
             #ans, batch_sizes = pack_padded_sequence(ans, ans_lengths, batch_first=True)
 
-            y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
-            y_onehot.zero_()
-            y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
-            y_v = Variable(y_onehot)
+            # y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
+            # y_onehot.zero_()
+            # y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
+            # y_v = Variable(y_onehot)
 
-            netG.zero_grad()
+            netR.zero_grad()
+            netM.zero_grad()
+            #encoder_fc.zero_grad()
             #inputs = Variable(images.data, volatile=True)
             #features = Variable(encoder(inputs).data)
-            features = images
+            visual_features = images
+            text_features   = netR(captions, lengths)
+
+            out = netM(visual_features, text_features)
             
-            out = netG(features=features, captions=y_v, lengths=lengths, states=states)
+            #out = netG(features=features, captions=y_v, lengths=lengths, states=states)
 
             mle_loss = criterion(out, ans)
             mle_loss.backward()
-            torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
+            #torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
             optimizer.step()
 
-            # if total_iterations % 1000 == 0:
-            #     netG.eval()
-            #     print("")
-            #     eval_input = Variable(features.data, volatile=True)
-            #     outputs = netG(eval_input, y_v, lengths, states)
-
-            #     def word_idx_to_sentence(sample):
-            #         sampled_caption = []
-            #         for word_id in sample:
-            #             word = question_vocab.idx2word[word_id]
-            #             sampled_caption.append(word)
-            #             if word == '<end>':
-            #                 break
-            #         return ' '.join(sampled_caption)
-
-            #     groundtruth_caption = captions.cpu().data.numpy()
-
-            #     ans = ans.cpu().data.numpy().tolist()
-            #     outputs = torch.max(outputs,1)[1]
-            #     outputs = outputs.cpu().data.numpy().squeeze().tolist()
-                
-            #     sampled_captions = ""
-            #     for index in range(10):
-            #         if index > 1:
-            #             break
-            #         sampled_caption   = word_idx_to_sentence(groundtruth_caption[index])
-            #         sampled_captions +=  "[Q]{} \n".format(sampled_caption)
-            #         sampled_captions += ("[A]{} \n".format(ans_vocab.idx2word[ans[index]]))
-            #         sampled_captions += ("[P]{} \n\n".format(ans_vocab.idx2word[outputs[index]]))
-
-            #     print(sampled_captions)
-            #     netG.train()
-
             # Print log info
-            if total_iterations % args.log_step == 0:
+            if i % args.log_step == 0:
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0])))
 
@@ -201,18 +179,18 @@ def run(save_path, args):
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
             if (total_iterations+1) % args.save_step == 0:
-                export(encoder, netG, val_data_loader, y_onehot,
+                export(encoder, netR, netM, val_data_loader, y_onehot,
                  val_states, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
 
             total_iterations += 1
 
-def export(encoder, netG, data_loader,y_onehot, state, criterion,
+def export(encoder, netR, netM, data_loader,y_onehot, state, criterion,
     question_vocab,ans_vocab, total_iterations, total_step, save_path):
 
-    netG.eval()
-    #encoder.eval()
-    for parameter in netG.parameters():
-        parameter.requires_grad = False
+    for net in [netR, netM]:
+        net.eval()
+        for parameter in net.parameters():
+            parameter.requires_grad = False
 
     responses = []
     for i, (images, captions, lengths, ann_id) in enumerate(data_loader):
@@ -223,16 +201,10 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
             images = images.cuda()
             captions = captions.cuda()
 
-        y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
-        y_onehot.zero_()
-        y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
-        y_v = Variable(y_onehot)
+        visual_features = images #encoder_fc(images)
+        text_features   = netR(captions, lengths)
 
-        netG.zero_grad()
-        #inputs = Variable(images.data, volatile=True)
-        #features = encoder(inputs)
-        features = images
-        outputs = netG(Variable(features.data, volatile=True), y_v, lengths, state)
+        outputs = netM(visual_features, text_features)
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
@@ -267,11 +239,10 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
     print "Overall Accuracy is: %.02f\n" %(vqaEval.accuracy['overall'])
     log_value('Val_Acc', vqaEval.accuracy['overall'], total_iterations)
 
-    netG.train()
-    for parameter in netG.parameters():
-        parameter.requires_grad = True
-
-    #encoder.train()
+    for net in [netR, netM]:
+        net.train()
+        for parameter in net.parameters():
+            parameter.requires_grad = True
 
 
 if __name__ == '__main__':
@@ -311,7 +282,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str)
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--val_batch_size', type=int, default=256)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=5e-4)
