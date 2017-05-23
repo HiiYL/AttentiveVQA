@@ -86,19 +86,19 @@ class EncoderCNN(nn.Module):
         return x
 
 class EncoderFC(nn.Module):
-    def __init__(self):
+    def __init__(self, global_only=False):
         super(EncoderFC, self).__init__()
+        self.global_only = global_only
         self.fc_global = nn.Sequential(
             nn.Conv2d(2048, 512, kernel_size=1,stride=1, padding=0),
             nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.Dropout()
-            )
-        self.fc_local = nn.Sequential(
-            nn.Conv2d(2048, 512, kernel_size=1,stride=1, padding=0),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.Dropout()
+            nn.ReLU()
+        )
+        if not global_only:
+            self.fc_local = nn.Sequential(
+                nn.Conv2d(2048, 512, kernel_size=1,stride=1, padding=0),
+                nn.BatchNorm2d(512),
+                nn.ReLU()
             )
         self._initialize_weights()
 
@@ -112,11 +112,12 @@ class EncoderFC(nn.Module):
         x_global = self.fc_global(x)
         x_global = F.avg_pool2d(x_global, kernel_size=x_global.size()[2:])[:,:,0,0]
 
-        x_local = self.fc_local(x)
-        x_local = x_local.view(x_local.size(0), x_local.size(1), x_local.size(2) * x_local.size(3))
-        x_local = x_local
+        if not self.global_only:
+            x_local = self.fc_local(x)
+            x_local = x_local.view(x_local.size(0), x_local.size(1), x_local.size(2) * x_local.size(3))
+            return x_global, x_local
 
-        return x_global, x_local
+        return x_global
 
 class EncoderRNN(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab_size, num_layers):
@@ -132,7 +133,6 @@ class EncoderRNN(nn.Module):
         
     def forward(self, captions, lengths):
         """Decode image feature vectors and generates captions."""
-        #captions = pack_padded_sequence(captions, lengths, batch_first=True)[0]
         embeddings = self.embed(captions)
         packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
         hiddens, _ = self.lstm(packed)
@@ -141,3 +141,16 @@ class EncoderRNN(nn.Module):
         last_hiddens = [ hiddens_padded[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
         last_hiddens = torch.cat(last_hiddens, 0)
         return last_hiddens #hiddens_padded
+
+
+from skipthought.skipthoughts import UniSkip, BiSkip,BayesianUniSkip
+class EncoderSkipThought(nn.Module):
+    def __init__(self, vocab):
+        """Set the hyper-parameters and build the layers."""
+        super(EncoderSkipThought, self).__init__()
+
+        dir_st = 'skipthought/data/skip-thoughts'
+        self.biskip = BayesianUniSkip(dir_st, vocab.word2idx.keys(), dropout=.25)
+
+    def forward(self, inputs, lengths):
+        return self.biskip(inputs, lengths=lengths)

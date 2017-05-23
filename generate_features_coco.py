@@ -5,6 +5,9 @@ import torch.backends.cudnn as cudnn
 from torch.autograd import Variable 
 from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision import transforms
+import torch.utils.data as data
+from pycocotools.coco import COCO
+from PIL import Image
 
 cudnn.benchmark = True
 
@@ -66,8 +69,8 @@ def train(save_path, args):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
     coco = CocoImgDataset(
-        image_dir="data/Images/mscoco/merged2014",
-         annotation_dir="data/vqa_train+val_complete.json",
+        image_dir="data/Images/mscoco/test2015",
+         annotation_dir="data/vqa_test.json",
          transform=transform)
 
     data_loader = torch.utils.data.DataLoader(dataset=coco, 
@@ -93,7 +96,7 @@ def train(save_path, args):
         features = encoder(images)
         for j in range(images.size(0)):
             key = str(img_id.numpy()[j])
-            path = os.path.join("data/features_eval/", key)
+            path = os.path.join("data/features_test/", key)
             value = features[j].data.cpu().float().numpy()
             np.savez_compressed(path, value)
 

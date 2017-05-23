@@ -43,8 +43,7 @@ class CocoDataset(data.Dataset):
         ans_vocab      = self.ans_vocab
         ann_id         = self.ids[index]
 
-        question = coco.anns[ann_id]['question']
-        ans      = coco.anns[ann_id]['ans']
+        question = coco.anns[ann_id]['final_question']
         img_id   = coco.anns[ann_id]['image_id']
 
         if self.finetune:
@@ -58,17 +57,12 @@ class CocoDataset(data.Dataset):
             image = np.load(path)['arr_0']
             image = torch.from_numpy(image)
 
-        # Convert caption (string) to word ids.
-        tokens = nltk.tokenize.word_tokenize(str(question).lower())
-        question = []
-        question.append(question_vocab('<start>'))
-        question.extend([question_vocab(token) for token in tokens])
-        question.append(question_vocab('<end>'))
         question = torch.Tensor(question)
 
         if self.mode in ["test", "val"]:
             return image, question, ann_id
 
+        ans      = coco.anns[ann_id]['ans']
         if self.classification:
             ans = [ans_vocab(str(ans).lower())]
             ans = torch.LongTensor(ans)[0]

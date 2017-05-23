@@ -81,18 +81,6 @@ class LSTMSpatial(nn.Module):
         super(LSTMSpatial, self).__init__()
         self.hidden_transform  = nn.Linear(hidden_size, hidden_size)
 
-        # self.hidden_transform = nn.Sequential(
-        #     nn.UpsamplingNearest2d(scale_factor=2),
-        #     nn.Conv2d(512, 512, 3, stride=1, padding=1),
-        #     nn.Tanh(),
-        #     nn.UpsamplingNearest2d(scale_factor=2),
-        #     nn.Conv2d(512, 512, 3, stride=1, padding=1),
-        #     nn.Tanh(),
-        #     nn.UpsamplingNearest2d(scale_factor=2),
-        #     nn.Conv2d(512, 512, 3, stride=1, padding=1),
-        #     nn.Tanh()
-        # )
-
         self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
         self.attn = nn.Conv2d(512, 1, kernel_size=1, stride=1, padding=0)
 
@@ -124,6 +112,47 @@ class LSTMSpatial(nn.Module):
                 kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
 
+class LSTMCustom(nn.Module):
+    def __init__(self, embed_size, hidden_size):
+        super(LSTMCustom, self).__init__()
+        self.lstm_cell = nn.LSTMCell(embed_size, hidden_size)
+
+        self.sentinel_igate = nn.Linear(hidden_size, hidden_size)
+        self.sentinel_hgate = nn.Linear(hidden_size, hidden_size)
+
+        self.attn      = nn.Linear( hidden_size * 2, 64)
+        self.attn_sentinel  = nn.Linear( hidden_size, 1)
+
+        self._initialize_weights()
+
+
+    def forward(self, inputs, hx, cx, features_spatial, features_global):
+        hy, cy = self.lstm_cell(inputs, (hx,cx))
+
+        sentinel_i, sentinel_h = self.sentinel_igate(inputs), self.sentinel_hgate(hx)
+        sentinel_gate          = F.sigmoid(sentinel_i + sentinel_h)
+        sentinel               = sentinel_gate * F.tanh(cy)
+
+        features_spatial       = torch.cat((features_spatial, sentinel.unsqueeze(2)),2)
+        base_atten     = self.attn(torch.cat((inputs, hy), 1))
+        sentinel_atten = self.attn_sentinel(sentinel)
+        
+        attn_weights = F.softmax(torch.cat((base_atten, sentinel_atten), 1))
+        visual_cy    = torch.bmm(features_spatial, attn_weights.unsqueeze(2)).squeeze(2)
+
+        beta   = attn_weights[:,-1].unsqueeze(1).expand_as(sentinel)
+        cy     = cy + ( beta * sentinel + ( 1 - beta ) * visual_cy )
+
+        hy = hy * features_global
+
+        return hy, cy
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                kaiming_uniform(m.weight.data)
+                m.bias.data.zero_()
+
 class LSTMSimple(nn.Module):
     def __init__(self, embed_size, hidden_size):
         super(LSTMSimple, self).__init__()
@@ -133,7 +162,7 @@ class LSTMSimple(nn.Module):
         self._initialize_weights()
 
     def forward(self, inputs, hx, cx, features):
-        
+
         hy, cy = self.lstm_cell(inputs, (hx,cx))
 
         attn_weights = F.softmax(self.attn(torch.cat((inputs, hy), 1)))
@@ -147,3 +176,5 @@ class LSTMSimple(nn.Module):
             if isinstance(m, nn.Linear):
                 kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
+
+

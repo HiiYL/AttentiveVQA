@@ -58,7 +58,7 @@ def run(save_path, args):
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
     
-    train_data_loader = get_loader("train", question_vocab, ans_vocab,
+    train_data_loader = get_loader("combined", question_vocab, ans_vocab,
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
 
@@ -66,7 +66,7 @@ def run(save_path, args):
     #                          train_transform, args.val_batch_size,
     #                          shuffle=False, num_workers=args.num_workers)
 
-    val_data_loader = get_loader("val", question_vocab, ans_vocab,
+    val_data_loader = get_loader("test", question_vocab, ans_vocab,
                              train_transform, args.val_batch_size,
                              shuffle=False, num_workers=args.num_workers)
 
@@ -117,10 +117,13 @@ def run(save_path, args):
 
         mle_loss = criterion(out, ans)
         mle_loss.backward()
+        torch.nn.utils.clip_grad_norm(netR.parameters(), args.clip)
+        torch.nn.utils.clip_grad_norm(netM.parameters(), args.clip)
         optimizer.step()
 
-        # t.set_description("Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f" 
-        #     % (i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0])))
+
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = 0.99997592083 * param_group['lr']
 
         # Print log info
         if iteration % args.log_step == 0:
@@ -137,7 +140,7 @@ def run(save_path, args):
              criterion, question_vocab,ans_vocab, iteration, save_path)
 
 def export(netR, netM, data_loader, criterion,
-    question_vocab,ans_vocab, iteration, save_path):
+    question_vocab,ans_vocab, iteration, save_path, validate=False):
 
     for net in [netR, netM]:
         net.eval()
@@ -169,23 +172,26 @@ def export(netR, netM, data_loader, criterion,
     json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(iteration))
     json.dump(responses, open(json_save_dir, "w"))
 
-    dataDir     = 'data'
-    taskType    ='OpenEnded'
-    dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
-    dataSubType ='val2014'
-    annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
-    quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
-    imgDir      ='%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
-    resFile     = json_save_dir
+    print("")
 
-    vqa     = VQA(annFile, quesFile)
-    vqaRes  = vqa.loadRes(resFile, quesFile)
-    vqaEval = VQAEval(vqa, vqaRes, n=2)
-    vqaEval.evaluate()
+    if validate:
+        dataDir     = 'data'
+        taskType    ='OpenEnded'
+        dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
+        dataSubType ='val2014'
+        annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
+        quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
+        imgDir      ='%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
+        resFile     = json_save_dir
 
-    print "\n"
-    print "Overall Accuracy is: %.02f\n" %(vqaEval.accuracy['overall'])
-    log_value('Val_Acc', vqaEval.accuracy['overall'], iteration)
+        vqa     = VQA(annFile, quesFile)
+        vqaRes  = vqa.loadRes(resFile, quesFile)
+        vqaEval = VQAEval(vqa, vqaRes, n=2)
+        vqaEval.evaluate()
+
+        print "\n"
+        print "Overall Accuracy is: %.02f\n" %(vqaEval.accuracy['overall'])
+        log_value('Val_Acc', vqaEval.accuracy['overall'], iteration)
 
     for net in [netR, netM]:
         net.train()
@@ -208,13 +214,13 @@ if __name__ == '__main__':
     parser.add_argument('--comments_path', type=str,
                         default='data/labels.h5',
                         help='path for train annotation json file')
-    parser.add_argument('--log_step', type=int , default=50,
+    parser.add_argument('--log_step', type=int , default=100,
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=10000,
+    parser.add_argument('--save_step', type=int , default=25000,
                         help='step size for saving trained models')
-    parser.add_argument('--val_step', type=int , default=10000,
+    parser.add_argument('--val_step', type=int , default=25000,
                         help='step size for saving trained models')
     
     # Model parameters
