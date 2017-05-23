@@ -12,6 +12,8 @@ from pycocotools.coco import COCO
 import random
 import json
 
+import h5py
+
 
 class CocoDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
@@ -22,8 +24,7 @@ class CocoDataset(data.Dataset):
         else:
             self.root = "data/Images/mscoco/merged2014"
             self.pickle_feature_path = "data/features/"
-
-
+        
         self.coco = COCO("data/vqa_{}.json".format(mode))
         self.ids = list(self.coco.anns.keys())
 
