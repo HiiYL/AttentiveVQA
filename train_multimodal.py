@@ -301,5 +301,6 @@ if __name__ == '__main__':
     if not os.path.exists(save_path):
         os.mkdir(save_path)
 
+    print("Logging to path: " + save_path)
     configure(save_path)
     run(save_path, args)

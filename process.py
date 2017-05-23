@@ -14,38 +14,41 @@ train_ques = json.load(open("data/Questions/v2_OpenEnded_mscoco_train2014_questi
 val_anno   = json.load(open("data/Annotations/v2_mscoco_val2014_annotations.json", "r"))
 val_ques = json.load(open("data/Questions/v2_OpenEnded_mscoco_val2014_questions.json", "r"))
 
-# train = []
-# for i in range(len(train_anno['annotations'])):
-#     ans = train_anno['annotations'][i]['multiple_choice_answer']
-#     question_id = train_anno['annotations'][i]['question_id']
-#     image_id = train_anno['annotations'][i]['image_id']
+train = []
+for i in range(len(train_anno['annotations'])):
+    ans = train_anno['annotations'][i]['multiple_choice_answer']
+    question_id = train_anno['annotations'][i]['question_id']
+    image_id = train_anno['annotations'][i]['image_id']
 
-#     question = train_ques['questions'][i]['question']
-#     mc_ans   = train_anno['annotations'][i]['answers']
+    question = train_ques['questions'][i]['question']
+    mc_ans   = train_anno['annotations'][i]['answers']
 
-#     train.append({'id': question_id, 'image_id': image_id, 'question': question,'ans': ans})#, 'MC_ans': mc_ans, })
-# vqa = {}
-# vqa["annotations"] = train
-# vqa["images"] = coco_caption["images"]
-# #json.dump(vqa, open("data/vqa_train.json", "w"))
+    train.append({'id': question_id, 'image_id': image_id, 'question': question,'ans': ans})#, 'MC_ans': mc_ans, })
+vqa = {}
+vqa["annotations"] = train
+vqa["images"] = coco_caption["images"]
+#json.dump(vqa, open("data/vqa_train.json", "w"))
 
-# val = []
-# for i in range(len(val_anno['annotations'])):
-#     ans = val_anno['annotations'][i]['multiple_choice_answer']
-#     question_id = val_anno['annotations'][i]['question_id']
-#     image_id = val_anno['annotations'][i]['image_id']
+val = []
+for i in range(len(val_anno['annotations'])):
+    ans = val_anno['annotations'][i]['multiple_choice_answer']
+    question_id = val_anno['annotations'][i]['question_id']
+    image_id = val_anno['annotations'][i]['image_id']
 
-#     question = val_ques['questions'][i]['question']
-#     mc_ans   = val_anno['annotations'][i]['answers']
+    question = val_ques['questions'][i]['question']
+    mc_ans   = val_anno['annotations'][i]['answers']
 
-#     val.append({'id': question_id, 'image_id': image_id, 'question': question,'ans': ans})#, 'MC_ans': mc_ans, })
+    val.append({'id': question_id, 'image_id': image_id, 'question': question,'ans': ans})#, 'MC_ans': mc_ans, })
 
-# vqa_val = {}
-# vqa_val["annotations"] = val
-# vqa_val["images"] = coco_caption_val["images"]
+vqa_val = {}
+vqa_val["annotations"] = val
+vqa_val["images"] = coco_caption_val["images"]
 # json.dump(vqa_val, open("data/vqa_val.json", "w"))
 
-
+# vqa_complete = {}
+# vqa_complete["annotations"] = vqa["annotations"] + vqa_val["annotations"]
+# vqa_complete["images"] = vqa["images"] + vqa_val["images"]
+# json.dump(vqa_complete, open("data/vqa_train+val_complete.json", "w"))
 
 test_ques = json.load(open("data/Questions/v2_OpenEnded_mscoco_test-dev2015_questions.json", "r"))
 vqa_test = {}

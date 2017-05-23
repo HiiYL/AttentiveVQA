@@ -10,7 +10,6 @@ cudnn.benchmark = True
 
 import numpy as np
 import os
-from data_loader_coco import CocoImgDataset
 from build_vocab import Vocabulary
 from models_spatial import EncoderCNN
 import cPickle as pickle
@@ -26,6 +25,38 @@ import h5py
 #import hickle as hkl
 import h5py
 
+class CocoImgDataset(data.Dataset):
+    """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
+    def __init__(self, image_dir, annotation_dir, transform=None):
+        """Set the path for images, captions and vocabulary wrapper.
+        
+        Args:
+            root: image directory.
+            json: coco annotation file path.
+            vocab: vocabulary wrapper.
+            transform: image transformer.
+        """
+        self.root = image_dir
+        self.coco = COCO(annotation_dir)
+        self.transform = transform
+        self.ids = list(self.coco.imgs.keys())
+
+    def __getitem__(self, index):
+        """Returns one data pair (image and caption)."""
+        coco = self.coco
+
+        img_id = self.ids[index]
+        path = coco.loadImgs(img_id)[0]['file_name']
+
+        image = Image.open(os.path.join(self.root, path)).convert('RGB')
+        if self.transform is not None:
+            image = self.transform(image)
+
+        return image, img_id
+
+    def __len__(self):
+        return len(self.ids)
+
 def train(save_path, args):
     # Create model directory
     if not os.path.exists(args.model_path):
@@ -38,8 +69,8 @@ def train(save_path, args):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
     coco = CocoImgDataset(
-        image_dir="data/Images/mscoco/test2015",
-         annotation_dir="data/vqa_test.json",
+        image_dir="data/Images/mscoco/merged2014",
+         annotation_dir="data/vqa_train+val_complete.json",
          transform=transform)
 
     data_loader = torch.utils.data.DataLoader(dataset=coco, 
@@ -52,15 +83,10 @@ def train(save_path, args):
     if torch.cuda.is_available():
         encoder = encoder.cuda()
 
-
     # Train the Models
     total_step = len(data_loader)
-
     total_iterations = 0
-
-    features_map = {}
-    # f = h5py.File("features.h5", "w")
-    # grp = f.create_group("features")
+    encoder.eval()
     for i, (images,img_id) in enumerate(data_loader):
         # Set mini-batch dataset
         images = Variable(images, volatile=True)
@@ -70,7 +96,7 @@ def train(save_path, args):
         features = encoder(images)
         for j in range(images.size(0)):
             key = str(img_id.numpy()[j])
-            path = os.path.join("data/features_test/", key)
+            path = os.path.join("data/features_eval/", key)
             value = features[j].data.cpu().float().numpy()
             np.savez_compressed(path, value)
 
@@ -96,11 +122,6 @@ if __name__ == '__main__':
     parser.add_argument('--comments_path', type=str,
                         default='data/labels.h5',
                         help='path for train annotation json file')
-    # parser.add_argument('--image_dir', type=str, default='./data/resized2014' ,
-    #                     help='directory for resized images')
-    # parser.add_argument('--comments_path', type=str,
-    #                     default='./data/annotations/captions_train2014.json',
-    #                     help='path for train annotation json file')
     parser.add_argument('--log_step', type=int , default=10,
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=10,
@@ -118,7 +139,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=256)
+    parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')

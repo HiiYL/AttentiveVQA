@@ -209,40 +209,6 @@ def collate_fn_vqa(data):
 
     return images, targets, lengths, ann_id,ans #ans_targets, ans_lengths
 
-
-
-class CocoImgDataset(data.Dataset):
-    """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
-    def __init__(self, image_dir, annotation_dir, transform=None):
-        """Set the path for images, captions and vocabulary wrapper.
-        
-        Args:
-            root: image directory.
-            json: coco annotation file path.
-            vocab: vocabulary wrapper.
-            transform: image transformer.
-        """
-        self.root = image_dir
-        self.coco = COCO(annotation_dir)
-        self.transform = transform
-        self.ids = list(self.coco.imgs.keys())
-
-    def __getitem__(self, index):
-        """Returns one data pair (image and caption)."""
-        coco = self.coco
-
-        img_id = self.ids[index]
-        path = coco.loadImgs(img_id)[0]['file_name']
-
-        image = Image.open(os.path.join(self.root, path)).convert('RGB')
-        if self.transform is not None:
-            image = self.transform(image)
-
-        return image, img_id
-
-    def __len__(self):
-        return len(self.ids)
-
 def get_loader(mode, question_vocab,ans_vocab, transform, batch_size, shuffle, num_workers):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""
     print(mode)
