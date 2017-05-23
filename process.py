@@ -43,39 +43,13 @@ for i in range(len(val_anno['annotations'])):
 vqa_val = {}
 vqa_val["annotations"] = val
 vqa_val["images"] = coco_caption_val["images"]
-# json.dump(vqa_val, open("data/vqa_val.json", "w"))
+json.dump(vqa_val, open("data/vqa_val.json", "w"))
 
-# vqa_complete = {}
-# vqa_complete["annotations"] = vqa["annotations"] + vqa_val["annotations"]
-# vqa_complete["images"] = vqa["images"] + vqa_val["images"]
-# json.dump(vqa_complete, open("data/vqa_train+val_complete.json", "w"))
-
-test_ques = json.load(open("data/Questions/v2_OpenEnded_mscoco_test-dev2015_questions.json", "r"))
-vqa_test = {}
-for question in test_ques["questions"]:
-    question["id"] = question["question_id"]
-
-vqa_test["annotations"] = test_ques["questions"]
-vqa_test["images"] = coco_images_test["images"]
-json.dump(vqa_test, open("data/vqa_test.json", "w"))
-
-
-image_ids = []
-for question in test_ques["questions"]:
-    image_ids.append(question['image_id'])
-
-coco_image_ids = []
-for image in coco_images_test["images"]:
-    coco_image_ids.append(image['id'])
-
-coco_image_ids = []
-for image in coco_images_test["images"]:
-    coco_image_ids.append(image['id'])
-
-test_images_uniques_count = len(set(image_ids))
-test_images_overlap_count = len(set(image_ids).intersection(set(coco_image_ids)))
-assert test_images_uniques_count == test_images_overlap_count \
- , " {} Missing images in test image set".format(abs(test_images_overlap_count - test_images_uniques_count))
+def prepare_complete_vocab():
+    vqa_complete = {}
+    vqa_complete["annotations"] = vqa["annotations"] + vqa_val["annotations"]
+    vqa_complete["images"] = vqa["images"] + vqa_val["images"]
+    json.dump(vqa_complete, open("data/vqa_train+val_complete.json", "w"))
 
 
 print("Preparing Answers vocab ... ")
@@ -85,51 +59,52 @@ counter = Counter()
 for i, qa_sample in enumerate(to_process):
     caption = str(qa_sample[s])
     counter.update([caption])
-    if i % 1000 == 0:
+    if i % 10000 == 0:
         print("[%d/%d] Tokenized the captions." %(i, len(to_process)))
 
-common_words = [ word for word,cnt in counter.most_common(1000) ]
+common_words = [ word for word,cnt in counter.most_common(2000) ]
 vocab = Vocabulary()
-vocab.add_word('<unk>')
+#vocab.add_word('<unk>')
 # Adds the words to the vocabulary.
 for i, word in enumerate(common_words):
     vocab.add_word(word)
 with open('data/{}_vocab.pkl'.format(s), 'wb') as f:
     pickle.dump(vocab, f, 2)
 
-
 print("Removing UNK entries from dataset ...")
 def removeUNK(to_process, common_words):
     initial_length = len(to_process)
     train_without_unk = []
     for i, qa_sample in enumerate(to_process):
-        if qa_sample['ans'] in common_words:
+        if qa_sample[s] in common_words:
             train_without_unk.append(qa_sample)
 
-        if i % 1000 == 0:
+        if i % 10000 == 0:
             print("[%d/%d] Filtering unks." %(i, len(to_process)))
-    print("{} out of {} answers containing <unk> discarded".format(initial_length - len(train_without_unk), initial_length))
+
+    difference = initial_length - len(train_without_unk)
+    print("{} out of {} answers containing <unk> discarded".format(difference, initial_length))
     return train_without_unk
 
-vqa_combined = {}
-vqa_combined["images"] = coco_caption["images"] + coco_caption_val["images"]
-combined_annotations_without_unk = removeUNK(train + val, common_words)
-vqa_combined["annotations"] = combined_annotations_without_unk
-json.dump(vqa_combined, open("data/vqa_train+val.json", "w"))
+# vqa_combined = {}
+# vqa_combined["images"] = coco_caption["images"] + coco_caption_val["images"]
+# combined_annotations_without_unk = removeUNK(train + val, common_words)
+# vqa_combined["annotations"] = combined_annotations_without_unk
+# json.dump(vqa_combined, open("data/vqa_train+val.json", "w"))
+
+train_annotations_without_unk = removeUNK(train, common_words)
+vqa["annotations"] = train_annotations_without_unk
+json.dump(vqa, open("data/vqa_train_top2000.json", "w"))
 
 
 print("Preparing Questions vocab ... ")
 s = 'question'
-to_process = combined_annotations_without_unk #train_without_unk #+ val
+to_process = train_annotations_without_unk #combined_annotations_without_unk #train_without_unk #+ val
 counter = Counter()
-# max_length = 0
 for i, qa_sample in enumerate(to_process):
     caption = str(qa_sample[s])
     tokens = nltk.tokenize.word_tokenize(caption.lower())
     counter.update(tokens)
-    # if len(tokens) > max_length:
-    #     max_length = len(tokens)
-    #     print(max_length)
 
     if i % 1000 == 0:
         print("[%d/%d] Tokenized the captions." %(i, len(to_process)))
@@ -170,16 +145,42 @@ with open('data/{}_vocab.pkl'.format(s), 'wb') as f:
 # with open('data/val_{}_vocab.pkl'.format(s), 'wb') as f:
 #     pickle.dump(vocab, f, 2)
 
+def prepare_char_vocab():
+    chars = string.ascii_lowercase + string.digits + string.punctuation + ' '
+    vocab = Vocabulary()
+    vocab.add_word('<pad>')
+    vocab.add_word('<start>')
+    vocab.add_word('<end>')
+    vocab.add_word('<unk>')
+    # Adds the words to the vocabulary.
+    for i, word in enumerate(chars):
+        vocab.add_word(word)
 
-chars = string.ascii_lowercase + string.digits + string.punctuation + ' '
-vocab = Vocabulary()
-vocab.add_word('<pad>')
-vocab.add_word('<start>')
-vocab.add_word('<end>')
-vocab.add_word('<unk>')
-# Adds the words to the vocabulary.
-for i, word in enumerate(chars):
-    vocab.add_word(word)
+    with open('data/ans_vocab_char.pkl'.format(s), 'wb') as f:
+        pickle.dump(vocab, f, 2)
 
-with open('data/ans_vocab_char.pkl'.format(s), 'wb') as f:
-    pickle.dump(vocab, f, 2)
+
+
+def prepare_test():
+    test_ques = json.load(open("data/Questions/v2_OpenEnded_mscoco_test-dev2015_questions.json", "r"))
+    vqa_test = {}
+    for question in test_ques["questions"]:
+        question["id"] = question["question_id"]
+
+    vqa_test["annotations"] = test_ques["questions"]
+    vqa_test["images"] = coco_images_test["images"]
+    json.dump(vqa_test, open("data/vqa_test.json", "w"))
+
+
+    image_ids = []
+    for question in test_ques["questions"]:
+        image_ids.append(question['image_id'])
+
+    coco_image_ids = []
+    for image in coco_images_test["images"]:
+        coco_image_ids.append(image['id'])
+
+    test_images_uniques_count = len(set(image_ids))
+    test_images_overlap_count = len(set(image_ids).intersection(set(coco_image_ids)))
+    assert test_images_uniques_count == test_images_overlap_count \
+     , " {} Missing images in test image set".format(abs(test_images_overlap_count - test_images_uniques_count))

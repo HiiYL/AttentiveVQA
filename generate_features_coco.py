@@ -22,9 +22,6 @@ import time
 from tensorboard_logger import configure, log_value
 import h5py
 
-#import hickle as hkl
-import h5py
-
 class CocoImgDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
     def __init__(self, image_dir, annotation_dir, transform=None):

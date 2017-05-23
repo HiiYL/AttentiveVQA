@@ -55,9 +55,6 @@ def run(save_path, args):
 
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
-
-    # with open("data/val_ans_vocab.pkl", 'rb') asf:
-    #     val_ans_vocab = pickle.load(f)
     
     train_data_loader = get_loader("train", question_vocab, ans_vocab,
                              train_transform, args.batch_size,
@@ -72,53 +69,22 @@ def run(save_path, args):
                              shuffle=False, num_workers=args.num_workers)
 
     # Build the models
-    #encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
-    encoder = None
-    encoder_fc = None#EncoderFC(global_only=True)
-    #netG = G_Spatial(args.embed_size, args.hidden_size, question_vocab, ans_vocab, args.num_layers)
-    #netR = EncoderRNN(args.embed_size, args.hidden_size, len(question_vocab), args.num_layers)
     netR = EncoderSkipThought(question_vocab)
     netM = MultimodalRNN(len(ans_vocab))
 
-    # if args.netG:
-    #     print("[!]loading pretrained netG....")
-    #     netG.load_state_dict(torch.load(args.netG))
-    #     print("Done!")
-
-    if args.encoder:
-        print("[!]loading pretrained decoder....")
-        encoder.load_state_dict(torch.load(args.encoder))
-        print("Done!")
-
     criterion = nn.CrossEntropyLoss()
-    
-    states = (Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)),
-     Variable(torch.zeros(args.num_layers, args.batch_size, args.hidden_size)))
-    val_states = (Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)),
-     Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)))
-
-    y_onehot = torch.FloatTensor(args.batch_size, 20,len(question_vocab))
 
     if torch.cuda.is_available():
-        #encoder = encoder.cuda()
-        #netG.cuda()
         netR.cuda()
         netM.cuda()
-        #encoder_fc.cuda()
-        states = [s.cuda() for s in states]
-        val_states = [s.cuda() for s in val_states]
         criterion = criterion.cuda()
-        y_onehot = y_onehot.cuda()
 
     params = [
                 {'params': netR.parameters()},
-                {'params': netM.parameters()},
-                #{'params': encoder_fc.parameters()}
-                #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
-                #{'params': encoder.fc.parameters()}
+                {'params': netM.parameters()}
                 
             ]
-    optimizer = torch.optim.Adam(params, lr=args.learning_rate,betas=(0.8, 0.999))
+    optimizer = torch.optim.RMSprop(params, lr=args.learning_rate)
 
     # Train the Models
     total_step       = len(train_data_loader)
@@ -135,28 +101,14 @@ def run(save_path, args):
                 captions = captions.cuda()
                 ans = ans.cuda()
 
-            #ans, batch_sizes = pack_padded_sequence(ans, ans_lengths, batch_first=True)
-
-            # y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
-            # y_onehot.zero_()
-            # y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
-            # y_v = Variable(y_onehot)
-
             netR.zero_grad()
             netM.zero_grad()
-            #encoder_fc.zero_grad()
-            #inputs = Variable(images.data, volatile=True)
-            #features = Variable(encoder(inputs).data)
             visual_features = images
             text_features   = netR(captions, lengths)
-
             out = netM(visual_features, text_features)
-            
-            #out = netG(features=features, captions=y_v, lengths=lengths, states=states)
 
             mle_loss = criterion(out, ans)
             mle_loss.backward()
-            #torch.nn.utils.clip_grad_norm(netG.parameters(), args.clip)
             optimizer.step()
 
             # Print log info
@@ -164,27 +116,18 @@ def run(save_path, args):
                 print('Epoch [%d/%d], Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
                       %(epoch, args.num_epochs, i, total_step,  mle_loss.data[0], np.exp(mle_loss.data[0])))
 
-            # # Save the model
-            # if (total_iterations+1) % args.save_step == 0:
-            #     torch.save(netG.state_dict(), 
-            #                os.path.join(save_path, 
-            #                             'netG-%d-%d.pkl' %(epoch+1, i+1)))
-            #     #torch.save(encoder.state_dict(), 
-            #     #           os.path.join(save_path, 
-            #     #                        'encoder-%d-%d.pkl' %(epoch+1, i+1)))
-
 
             if total_iterations % args.tb_log_step == 0:
                 log_value('Loss', mle_loss.data[0], total_iterations)
                 log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
             if (total_iterations+1) % args.save_step == 0:
-                export(encoder, netR, netM, val_data_loader, y_onehot,
-                 val_states, criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
+                export(netR, netM, val_data_loader,
+                 criterion, question_vocab,ans_vocab, total_iterations, total_step, save_path)
 
             total_iterations += 1
 
-def export(encoder, netR, netM, data_loader,y_onehot, state, criterion,
+def export(netR, netM, data_loader, criterion,
     question_vocab,ans_vocab, total_iterations, total_step, save_path):
 
     for net in [netR, netM]:
@@ -197,14 +140,15 @@ def export(encoder, netR, netM, data_loader,y_onehot, state, criterion,
         # Set mini-batch dataset
         images = Variable(images, volatile=True)
         captions = Variable(captions, volatile=True)
+
         if torch.cuda.is_available():
             images = images.cuda()
             captions = captions.cuda()
 
-        visual_features = images #encoder_fc(images)
+        visual_features = images
         text_features   = netR(captions, lengths)
 
-        outputs = netM(visual_features, text_features)
+        outputs = netM(visual_features, text_features.detach())
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
@@ -220,18 +164,17 @@ def export(encoder, netR, netM, data_loader,y_onehot, state, criterion,
     json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(total_iterations))
     json.dump(responses, open(json_save_dir, "w"))
 
-    dataDir = 'data'
+    dataDir     = 'data'
     taskType    ='OpenEnded'
     dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
     dataSubType ='val2014'
     annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
     quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
     imgDir      ='%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
+    resFile     = json_save_dir
 
-    resFile = json_save_dir
-
-    vqa = VQA(annFile, quesFile)
-    vqaRes = vqa.loadRes(resFile, quesFile)
+    vqa     = VQA(annFile, quesFile)
+    vqaRes  = vqa.loadRes(resFile, quesFile)
     vqaEval = VQAEval(vqa, vqaRes, n=2)
     vqaEval.evaluate()
 
@@ -285,7 +228,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=200)
     parser.add_argument('--val_batch_size', type=int, default=256)
     parser.add_argument('--num_workers', type=int, default=8)
-    parser.add_argument('--learning_rate', type=float, default=5e-4)
+    parser.add_argument('--learning_rate', type=float, default=3e-4)
     parser.add_argument('--seed', type=int, default=123)
     args = parser.parse_args()
     print(args)

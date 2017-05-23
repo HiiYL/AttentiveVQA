@@ -15,34 +15,36 @@ import json
 
 class CocoDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
-    def __init__(self, mode, question_vocab, ans_vocab, finetune=False,transform=None):
-        """Set the path for images, captions and vocabulary wrapper.
-        
-        Args:
-            root: image directory.
-            json: coco annotation file path.
-            vocab: vocabulary wrapper.
-            transform: image transformer.
-        """
-        self.root = "data/Images/mscoco/merged2014"
+    def __init__(self, mode, question_vocab, ans_vocab, finetune=False,transform=None, classification=True):
+        if mode == "test":
+            self.root = "data/Images/mscoco/test2015"
+            self.pickle_feature_path = "data/features_test/"
+        else:
+            self.root = "data/Images/mscoco/merged2014"
+            self.pickle_feature_path = "data/features/"
+
+
         self.coco = COCO("data/vqa_{}.json".format(mode))
         self.ids = list(self.coco.anns.keys())
+
         self.question_vocab = question_vocab
         self.ans_vocab = ans_vocab
-        self.transform = transform
-        self.pickle_feature_path = "data/features/"
 
-        self.finetune = finetune
+        self.transform = transform
+        self.finetune  = finetune
+        self.mode      = mode
+        self.classification = classification
 
     def __getitem__(self, index):
         """Returns one data pair (image and caption)."""
-        coco = self.coco
+        coco           = self.coco
         question_vocab = self.question_vocab
-        ans_vocab = self.ans_vocab
-        ann_id = self.ids[index]
+        ans_vocab      = self.ans_vocab
+        ann_id         = self.ids[index]
+
         question = coco.anns[ann_id]['question']
-        ans = coco.anns[ann_id]['ans']
-        img_id = coco.anns[ann_id]['image_id']
+        ans      = coco.anns[ann_id]['ans']
+        img_id   = coco.anns[ann_id]['image_id']
 
         if self.finetune:
             path = coco.loadImgs(img_id)[0]['file_name']
@@ -53,7 +55,7 @@ class CocoDataset(data.Dataset):
             filename = str(img_id) + ".npz"
             path = os.path.join(self.pickle_feature_path, filename)
             image = np.load(path)['arr_0']
-            image = torch.FloatTensor(image)
+            image = torch.from_numpy(image)
 
         # Convert caption (string) to word ids.
         tokens = nltk.tokenize.word_tokenize(str(question).lower())
@@ -63,75 +65,21 @@ class CocoDataset(data.Dataset):
         question.append(question_vocab('<end>'))
         question = torch.Tensor(question)
 
-        #tokens = nltk.tokenize.word_tokenize(str(ans).lower())
-        #ans = []
-        #ans.append(ans_vocab('<start>'))
-        #ans.extend([ans_vocab(token) for token in tokens])
-        #ans.append(ans_vocab('<end>'))
-        ans = [ans_vocab(str(ans).lower())]
+        if self.mode in ["test", "val"]:
+            return image, question, ann_id
 
-        ## TODO: Support arbitrary lengths
-        ans = torch.LongTensor(ans)[0]
+        if self.classification:
+            ans = [ans_vocab(str(ans).lower())]
+            ans = torch.LongTensor(ans)[0]
+        else:
+            tokens = nltk.tokenize.word_tokenize(str(ans).lower())
+            ans = []
+            ans.append(ans_vocab('<start>'))
+            ans.extend([ans_vocab(token) for token in tokens])
+            ans.append(ans_vocab('<end>'))
+
 
         return image, question, ann_id, ans
-
-    def __len__(self):
-        return len(self.ids)
-
-class CocoTestDataset(data.Dataset):
-    """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
-    def __init__(self, mode, question_vocab, ans_vocab, transform=None):
-        """Set the path for images, captions and vocabulary wrapper.
-        
-        Args:
-            root: image directory.
-            json: coco annotation file path.
-            vocab: vocabulary wrapper.
-            transform: image transformer.
-        """
-        if mode == "test":
-            self.root = "data/Images/mscoco/test2015"
-            self.coco = COCO("data/vqa_test.json")
-            self.pickle_feature_path = "data/features_test/"
-        else:
-            self.root = "data/Images/mscoco/merged2014"
-            self.coco = COCO("data/vqa_val.json")
-            self.pickle_feature_path = "data/features/"
-
-        self.ids = list(self.coco.anns.keys())
-        self.question_vocab = question_vocab
-
-        self.ans_vocab = ans_vocab
-        self.transform = transform
-
-    def __getitem__(self, index):
-        """Returns one data pair (image and caption)."""
-        coco = self.coco
-        question_vocab = self.question_vocab
-        ans_vocab = self.ans_vocab
-        ann_id = self.ids[index]
-        question = coco.anns[ann_id]['question']
-        img_id = coco.anns[ann_id]['image_id']
-        path = coco.loadImgs(img_id)[0]['file_name']
-        #img_path = os.path.join(self.root, path)
-        #image = Image.open(img_path).convert('RGB')
-        #if self.transform is not None:
-        #    image = self.transform(image)
-
-        filename = str(img_id) + ".npz"
-        path = os.path.join(self.pickle_feature_path, filename)
-        image = np.load(path)['arr_0']
-        image = torch.FloatTensor(image)
-
-        # Convert caption (string) to word ids.
-        tokens = nltk.tokenize.word_tokenize(str(question).lower())
-        question = []
-        question.append(question_vocab('<start>'))
-        question.extend([question_vocab(token) for token in tokens])
-        question.append(question_vocab('<end>'))
-        question = torch.Tensor(question)
-
-        return image, question, ann_id
 
     def __len__(self):
         return len(self.ids)
@@ -160,7 +108,6 @@ def collate_fn_test(data):
     images = torch.stack(images, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).
-
     lengths = [len(cap) for cap in captions]
     targets = torch.zeros(len(captions), max(lengths)).long()
     for i, cap in enumerate(captions):
@@ -213,24 +160,15 @@ def get_loader(mode, question_vocab,ans_vocab, transform, batch_size, shuffle, n
     """Returns torch.utils.data.DataLoader for custom coco dataset."""
     print(mode)
     # COCO caption dataset
-    if mode == "train":
-        coco = CocoDataset(mode=mode,
-                           question_vocab=question_vocab,
-                           ans_vocab=ans_vocab,
-                           transform=transform)
-        collate_fn_to_use = collate_fn_vqa
-    else:
-        coco = CocoTestDataset(mode=mode,
-                       question_vocab=question_vocab,
-                       ans_vocab=ans_vocab,
-                       transform=transform)
+    coco = CocoDataset(mode=mode,
+                   question_vocab=question_vocab,
+                   ans_vocab=ans_vocab,
+                   transform=transform)
+    
+    if mode in ["test", "val"]:
         collate_fn_to_use = collate_fn_test
-
-    # elif mode == "val":
-    #     coco = CocoValDataset(mode=mode,
-    #                        vocab=vocab,
-    #                        transform=transform)
-    #     collate_fn_to_use = collate_fn
+    else:
+        collate_fn_to_use = collate_fn_vqa
     
     # Data loader for COCO dataset
     # This will return (images, captions, lengths) for every iteration.
