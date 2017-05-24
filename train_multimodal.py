@@ -162,7 +162,7 @@ def export(netR, netM, data_loader, criterion,
         visual_features = images
         text_features   = netR(captions, lengths)
 
-        outputs, outputs_type = netM(visual_features, text_features)
+        outputs = netM(visual_features, text_features)
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
