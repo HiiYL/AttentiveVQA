@@ -15,7 +15,7 @@ import os
 from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
 from models.encoder import EncoderCNN, EncoderRNN, EncoderFC, EncoderSkipThought
-from models.classification_models import G_Spatial, MultimodalRNN
+from models.classification_models import G_Spatial, MultimodalRNN, MultimodalAttentionRNN
 import pickle
 import datetime
 
@@ -58,21 +58,18 @@ def run(save_path, args):
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
     
-    train_data_loader = get_loader("combined", question_vocab, ans_vocab,
+    train_data_loader = get_loader("train", question_vocab, ans_vocab,
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
 
-    # test_data_loader = get_loader("test", question_vocab, ans_vocab,
-    #                          train_transform, args.val_batch_size,
-    #                          shuffle=False, num_workers=args.num_workers)
-
-    val_data_loader = get_loader("test", question_vocab, ans_vocab,
+    validate = True
+    val_data_loader = get_loader("val", question_vocab, ans_vocab,
                              train_transform, args.val_batch_size,
                              shuffle=False, num_workers=args.num_workers)
 
     # Build the models
     netR = EncoderSkipThought(question_vocab)
-    netM = MultimodalRNN(len(ans_vocab))
+    netM = MultimodalAttentionRNN(len(ans_vocab))
 
     criterion = nn.CrossEntropyLoss()
 
@@ -96,27 +93,31 @@ def run(save_path, args):
 
     for iteration in t:
         try:
-            (images, captions, lengths, ann_id, ans) = next(data_loader)
+            (images, captions, lengths, ann_id, ans, question_type) = next(data_loader)
         except StopIteration:
             data_loader = iter(train_data_loader)
-            (images, captions, lengths, ann_id, ans) = next(data_loader)
+            (images, captions, lengths, ann_id, ans, question_type) = next(data_loader)
         # Set mini-batch dataset
-        images = Variable(images)
-        captions = Variable(captions)
-        ans = Variable(torch.LongTensor(ans))
+        images        = Variable(images)
+        captions      = Variable(captions)
+        ans           = Variable(ans)
+        question_type = Variable(question_type)
+
         if torch.cuda.is_available():
             images = images.cuda()
             captions = captions.cuda()
             ans = ans.cuda()
+            question_type = question_type.cuda()
 
         netR.zero_grad()
         netM.zero_grad()
         visual_features = images
         text_features   = netR(captions, lengths)
-        out = netM(visual_features, text_features)
+        out             = netM(visual_features, text_features)
+        #out, out_type = netM(visual_features, text_features)
 
-        mle_loss = criterion(out, ans)
-        mle_loss.backward()
+        loss = criterion(out, ans)# + criterion(out_type, question_type)
+        loss.backward()
         torch.nn.utils.clip_grad_norm(netR.parameters(), args.clip)
         torch.nn.utils.clip_grad_norm(netM.parameters(), args.clip)
         optimizer.step()
@@ -128,16 +129,16 @@ def run(save_path, args):
         # Print log info
         if iteration % args.log_step == 0:
             print('Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
-                  %(iteration, total_iterations,  mle_loss.data[0], np.exp(mle_loss.data[0])))
+                  %(iteration, total_iterations,  loss.data[0], np.exp(loss.data[0])))
 
 
         if iteration % args.tb_log_step == 0:
-            log_value('Loss', mle_loss.data[0], iteration)
-            log_value('Perplexity', np.exp(mle_loss.data[0]), iteration)
+            log_value('Loss', loss.data[0], iteration)
+            log_value('Perplexity', np.exp(loss.data[0]), iteration)
 
         if (iteration+1) % args.save_step == 0:
             export(netR, netM, val_data_loader,
-             criterion, question_vocab,ans_vocab, iteration, save_path)
+             criterion, question_vocab,ans_vocab, iteration, save_path, validate=validate)
 
 def export(netR, netM, data_loader, criterion,
     question_vocab,ans_vocab, iteration, save_path, validate=False):
@@ -161,7 +162,7 @@ def export(netR, netM, data_loader, criterion,
         visual_features = images
         text_features   = netR(captions, lengths)
 
-        outputs = netM(visual_features, text_features)
+        outputs, outputs_type = netM(visual_features, text_features)
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
@@ -218,9 +219,9 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=25000,
+    parser.add_argument('--save_step', type=int , default=10000,
                         help='step size for saving trained models')
-    parser.add_argument('--val_step', type=int , default=25000,
+    parser.add_argument('--val_step', type=int , default=10000,
                         help='step size for saving trained models')
     
     # Model parameters

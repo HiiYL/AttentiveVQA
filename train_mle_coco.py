@@ -56,9 +56,6 @@ def run(save_path, args):
 
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
-
-    # with open("data/val_ans_vocab.pkl", 'rb') asf:
-    #     val_ans_vocab = pickle.load(f)
     
     train_data_loader = get_loader("train", question_vocab, ans_vocab,
                              train_transform, args.batch_size,
@@ -71,6 +68,7 @@ def run(save_path, args):
     val_data_loader = get_loader("val", question_vocab, ans_vocab,
                              train_transform, args.val_batch_size,
                              shuffle=False, num_workers=args.num_workers)
+    validate=True
 
     # Build the models
     #encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
@@ -94,18 +92,15 @@ def run(save_path, args):
     val_states = (Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)),
      Variable(torch.zeros(args.num_layers, args.val_batch_size, args.hidden_size)))
 
-    y_onehot = torch.FloatTensor(args.batch_size, 20,len(question_vocab))
-
     if torch.cuda.is_available():
         netG.cuda()
         states = [s.cuda() for s in states]
         val_states = [s.cuda() for s in val_states]
         criterion = criterion.cuda()
-        y_onehot = y_onehot.cuda()
 
     params = [
                 {'params': netG.parameters()},
-                #{'params': encoder.parameters(), 'lr': 0.1 * args.learning_rate}
+                #{'params': encoder.parameters(), 'lr': 0.5 * args.learning_rate}
             ]
     optimizer = torch.optim.Adam(params, lr=args.learning_rate,betas=(0.8, 0.999))
 
@@ -128,18 +123,12 @@ def run(save_path, args):
             captions = captions.cuda()
             ans = ans.cuda()
 
-        #ans, batch_sizes = pack_padded_sequence(ans, ans_lengths, batch_first=True)
-        y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
-        y_onehot.zero_()
-        y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
-        y_v = Variable(y_onehot)
-
         netG.zero_grad()
         #inputs = Variable(images.data, volatile=True)
         #features = Variable(encoder(inputs).data)
         features = images
         
-        out = netG(features=features, captions=y_v, lengths=lengths, states=states)
+        out = netG(features=features, captions=captions, lengths=lengths, states=states)
 
         mle_loss = criterion(out, ans)
         mle_loss.backward()
@@ -199,12 +188,12 @@ def run(save_path, args):
             log_value('Perplexity', np.exp(mle_loss.data[0]), total_iterations)
 
         if (iteration+1) % args.save_step == 0:
-            export(encoder, netG, val_data_loader, y_onehot,
-             val_states, criterion, question_vocab,ans_vocab, iteration, save_path)
+            export(encoder, netG, val_data_loader,
+             val_states, criterion, question_vocab,ans_vocab, iteration, save_path, validate=validate)
 
 
-def export(encoder, netG, data_loader,y_onehot, state, criterion,
-    question_vocab,ans_vocab, iteration, save_path):
+def export(encoder, netG, data_loader, state, criterion,
+    question_vocab,ans_vocab, iteration, save_path, validate=False):
 
     netG.eval()
     #encoder.eval()
@@ -220,16 +209,10 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
             images = images.cuda()
             captions = captions.cuda()
 
-        y_onehot.resize_(captions.size(0),captions.size(1),len(question_vocab))
-        y_onehot.zero_()
-        y_onehot.scatter_(2,captions.data.unsqueeze(2),1)
-        y_v = Variable(y_onehot)
 
-        netG.zero_grad()
         #inputs = Variable(images.data, volatile=True)
         #features = encoder(inputs)
-        features = images
-        outputs = netG(Variable(features.data, volatile=True), y_v, lengths, state)
+        outputs = netG(images, captions, lengths, state)
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
@@ -240,24 +223,25 @@ def export(encoder, netG, data_loader,y_onehot, state, criterion,
     json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(iteration))
     json.dump(responses, open(json_save_dir, "w"))
 
-    dataDir = 'data'
-    taskType    ='OpenEnded'
-    dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
-    dataSubType ='val2014'
-    annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
-    quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
-    imgDir      ='%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
+    if validate:
+        dataDir = 'data'
+        taskType    ='OpenEnded'
+        dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
+        dataSubType ='val2014'
+        annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
+        quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
+        imgDir      ='%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
 
-    resFile = json_save_dir
+        resFile = json_save_dir
 
-    vqa = VQA(annFile, quesFile)
-    vqaRes = vqa.loadRes(resFile, quesFile)
-    vqaEval = VQAEval(vqa, vqaRes, n=2)
-    vqaEval.evaluate()
+        vqa = VQA(annFile, quesFile)
+        vqaRes = vqa.loadRes(resFile, quesFile)
+        vqaEval = VQAEval(vqa, vqaRes, n=2)
+        vqaEval.evaluate()
 
-    print "\n"
-    print "Overall Accuracy is: %.02f\n" %(vqaEval.accuracy['overall'])
-    log_value('Val_Acc', vqaEval.accuracy['overall'], total_iterations)
+        print "\n"
+        print "Overall Accuracy is: %.02f\n" %(vqaEval.accuracy['overall'])
+        log_value('Val_Acc', vqaEval.accuracy['overall'], iteration)
 
     netG.train()
     for parameter in netG.parameters():

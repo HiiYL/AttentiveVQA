@@ -10,13 +10,13 @@ from tqdm import tqdm
 topk                   = 2000
 vqa_val_save_path      = "data/vqa_val.json"
 vqa_train_save_path    = "data/vqa_train.json"
-vqa_combined_save_path = "data/vqa_combined.json"
 vqa_test_save_path     = "data/vqa_test.json"
 
-question_vocab_path = 'data/question_vocab.pkl'
-ans_vocab_save_path = 'data/ans_vocab.pkl'
+question_vocab_path           = 'data/question_vocab.pkl'
+question_type_vocab_save_path = 'data/question_type_vocab.pkl'
+ans_vocab_save_path           = 'data/ans_vocab.pkl'
 
-split = 2
+split = 1
 
 print("Loading Annotations ...")
 coco_caption = json.load(open('data/captions_train2014.json', 'r'))
@@ -44,10 +44,14 @@ def prepare_data(coco_data, ques, anno=None):
             ans = anno['annotations'][i]['multiple_choice_answer']
             question_id = anno['annotations'][i]['question_id']
             image_id = anno['annotations'][i]['image_id']
+            mc_ans    = anno['annotations'][i]['answers']
+            ques_type = anno['annotations'][i]['question_type']
 
-            question = ques['questions'][i]['question']
-            mc_ans   = anno['annotations'][i]['answers']
-            annotations.append({'id': question_id, 'image_id': image_id, 'question': question,'ans': ans}) #, 'MC_ans': mc_ans})
+            question  = ques['questions'][i]['question']
+            annotations.append({
+            'id': question_id, 'image_id': image_id,
+             'question': question,'ans': ans,
+             'question_type': ques_type}) #, 'MC_ans': mc_ans})
         vqa["annotations"] = annotations
     
     vqa["images"] =  coco_data["images"]
@@ -82,6 +86,33 @@ def prepare_answers_vocab(vqa):
 
     return ans_vocab, common_words
 
+
+def prepare_question_type_vocab(annotations, topk=65):
+    counter = Counter()
+    print("counting question types ... ")
+
+    for annotation in tqdm(annotations):
+        caption = str(annotation['question_type'])
+        counter.update([caption])
+
+    print("Top 20 Most Common Questions")
+    for word, cnt in counter.most_common(20):
+        print("{} - {}".format(word.ljust(10), cnt))
+
+    common_words = [ word for word,cnt in counter.most_common(topk) ]
+
+    question_type_vocab = Vocabulary()
+    for i, word in enumerate(common_words):
+        question_type_vocab.add_word(word)
+
+    return question_type_vocab
+
+def convert_field_to_index(annotations, field, vocab):
+    for annotation in tqdm(annotations):
+        annotation[field] = vocab(annotation[field])
+
+    return annotations
+
 def prepare_question_vocab(vqa):
     s = 'question'
     to_process = vqa["annotations"] 
@@ -102,20 +133,22 @@ def prepare_question_vocab(vqa):
 
     return question_vocab
 
+
+
 def convert_word_to_idx(vqa_annotations, question_vocab):
     print("Converting word to indices ... ")
-    for i, qa_sample in enumerate(tqdm(vqa_annotations)):
-        if "processed_tokens" in qa_sample:
-            tokens =  qa_sample["processed_tokens"]
+    for i, annotation in enumerate(tqdm(vqa_annotations)):
+        if "processed_tokens" in annotation:
+            tokens =  annotation["processed_tokens"]
         else:
-            caption = str(qa_sample['question'])
+            caption = str(annotation['question'])
             tokens = nltk.tokenize.word_tokenize(caption.lower())
-            qa_sample["processed_tokens"] = tokens
+            annotation["processed_tokens"] = tokens
 
         question = []
         question.extend([question_vocab(token) for token in tokens])
         question.append(question_vocab('<end>'))
-        qa_sample["final_question"] = question
+        annotation["final_question"] = question
 
     return vqa_annotations
 
@@ -134,7 +167,6 @@ def trim(to_process, common_words, s='ans'):
         .format(initial_length,  len(trimmed) , percentage_remaining))
     return trimmed
 
-
 if __name__ == '__main__':
     if split == 1:
         print("--------------------------------")
@@ -144,23 +176,7 @@ if __name__ == '__main__':
         vqa_train = prepare_data(coco_caption, train_ques, train_anno)
 
         print("Preparing Validation Data ... ")
-        vqa_val   = prepare_data(coco_caption_val, val_ques, val_anno)
-
-        print("Preparing Answers Vocab ... ")
-        ans_vocab, common_words = prepare_answers_vocab(vqa_train)
-
-        print("Counting training samples to remove ... ")
-        vqa_train["annotations"] = trim(vqa_train["annotations"], common_words)
-
-        print("Preparing Questions Vocab ... ")
-        question_vocab = prepare_question_vocab(vqa_train)
-
-        print("Saving VQA training data ...")
-        json.dump(vqa_train, open(vqa_train_save_path, "w"))
-        print("vqa_train saved to " + vqa_train_save_path)
-
-        json.dump(vqa_val, open(vqa_val_save_path, "w"))
-        print("vqa_val saved to " + vqa_val_save_path)
+        vqa_test   = prepare_data(coco_caption_val, val_ques, val_anno)
 
     elif split == 2:
         print("---------------------------------------")
@@ -170,31 +186,38 @@ if __name__ == '__main__':
         vqa_train = prepare_data(coco_caption    , train_ques, train_anno)
         vqa_val   = prepare_data(coco_caption_val, val_ques  , val_anno)
 
-        vqa_combined = merge(vqa_train, vqa_val)
+        vqa_train = merge(vqa_train, vqa_val)
 
         print("Preparing Test Data")
         vqa_test  = prepare_data(coco_images_test, test_ques)
         
-        print("Preparing Answers Vocab ... ")
-        ans_vocab, common_words = prepare_answers_vocab(vqa_combined)
+    print("Preparing Answers Vocab ... ")
+    ans_vocab, common_words = prepare_answers_vocab(vqa_train)
 
-        print("Counting training samples to remove ... ")
-        vqa_combined["annotations"] = trim(vqa_combined["annotations"], common_words)
+    print("Counting training samples to remove ... ")
+    vqa_train["annotations"] = trim(vqa_train["annotations"], common_words)
 
-        print("Preparing Questions Vocab ... ")
-        question_vocab = prepare_question_vocab(vqa_combined)
+    print("Preparing Questions Vocab ... ")
+    question_vocab = prepare_question_vocab(vqa_train)
 
-        vqa_combined["annotations"]   = convert_word_to_idx(vqa_combined["annotations"], question_vocab)
-        vqa_test["annotations"]       = convert_word_to_idx(vqa_test["annotations"], question_vocab)
+    vqa_train["annotations"]   = convert_word_to_idx(vqa_train["annotations"], question_vocab)
+    vqa_test["annotations"]    = convert_word_to_idx(vqa_test["annotations"], question_vocab)
 
-        print("Saving VQA training data ...")
-        json.dump(vqa_combined, open(vqa_combined_save_path, "w"))
-        print("vqa_combined saved to " + vqa_combined_save_path)
+    print("Preparing Question Type Vocab ... ")
+    question_type_vocab      = prepare_question_type_vocab(vqa_train["annotations"])
 
-        print("Saving VQA test data ...")
-        json.dump(vqa_test, open(vqa_test_save_path, "w"))
-        print("vqa_test saved to " + vqa_test_save_path)
 
+    print("Converting fields to indices ... ")
+    vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], "question_type", question_type_vocab)
+    vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], "ans", ans_vocab)
+
+    print("Saving VQA training data ...")
+    json.dump(vqa_train, open(vqa_train_save_path, "w"))
+    print("vqa_train saved to " + vqa_train_save_path)
+
+    print("Saving VQA test data ...")
+    json.dump(vqa_test, open(vqa_test_save_path, "w"))
+    print("vqa_test saved to " + vqa_test_save_path)
 
 
     print("Number of words in question vocab: {}".format(len(question_vocab)))
@@ -206,3 +229,8 @@ if __name__ == '__main__':
     with open(ans_vocab_save_path, 'wb') as f:
         pickle.dump(ans_vocab, f, 2)
     print("Answer vocab saved to " + ans_vocab_save_path)
+
+    print("Number of words in question type vocab: {}".format(len(question_type_vocab)))
+    with open(question_type_vocab_save_path, 'wb') as f:
+        pickle.dump(question_type_vocab, f, 2)
+    print("Question type vocab saved to " + question_type_vocab_save_path)

@@ -36,6 +36,8 @@ class CocoDataset(data.Dataset):
         self.mode      = mode
         self.classification = classification
 
+        self.question_type_vocab = pickle.load(open("data/question_type_vocab.pkl", "r"))
+
     def __getitem__(self, index):
         """Returns one data pair (image and caption)."""
         coco           = self.coco
@@ -63,9 +65,10 @@ class CocoDataset(data.Dataset):
             return image, question, ann_id
 
         ans      = coco.anns[ann_id]['ans']
+        qtype    = coco.anns[ann_id]['question_type']
+
         if self.classification:
-            ans = [ans_vocab(str(ans).lower())]
-            ans = torch.LongTensor(ans)[0]
+            ans = torch.LongTensor([ans])
         else:
             tokens = nltk.tokenize.word_tokenize(str(ans).lower())
             ans = []
@@ -73,8 +76,10 @@ class CocoDataset(data.Dataset):
             ans.extend([ans_vocab(token) for token in tokens])
             ans.append(ans_vocab('<end>'))
 
+        question_type = torch.LongTensor([qtype])
 
-        return image, question, ann_id, ans
+
+        return image, question, ann_id, ans, question_type
 
     def __len__(self):
         return len(self.ids)
@@ -129,10 +134,12 @@ def collate_fn_vqa(data):
     """
     # Sort a data list by caption length (descending order).
     data.sort(key=lambda x: len(x[1]), reverse=True)
-    images, captions, ann_id, ans = zip(*data)
+    images, captions, ann_id, ans, question_type = zip(*data)
 
     # Merge images (from tuple of 3D tensor to 4D tensor).
-    images = torch.stack(images, 0)
+    images           = torch.stack(images, 0)
+    ans              = torch.cat(ans, 0)
+    question_type    = torch.cat(question_type, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).
 
@@ -149,7 +156,7 @@ def collate_fn_vqa(data):
     #     end = ans_lengths[i]
     #     ans_targets[i, :end] = cap[:end]
 
-    return images, targets, lengths, ann_id,ans #ans_targets, ans_lengths
+    return images, targets, lengths, ann_id,ans, question_type #ans_targets, ans_lengths
 
 def get_loader(mode, question_vocab,ans_vocab, transform, batch_size, shuffle, num_workers):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""
