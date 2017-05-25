@@ -66,7 +66,7 @@ def merge(vqa_1, vqa_2):
 
     return vqa_merged
 
-def prepare_answers_vocab(annotations, topk=2000):
+def prepare_answers_vocab(annotations):
     s = 'ans'
     
     counter = Counter()
@@ -93,7 +93,7 @@ def ans_type_to_idx(annotations):
 
     uniques = list(set(ans_type))
     ans_type_vocab = Vocabulary()
-
+    
     for i, word in enumerate(uniques):
         ans_type_vocab.add_word(word)
 
