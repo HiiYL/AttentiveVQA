@@ -58,12 +58,12 @@ def run(save_path, args):
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
     
-    train_data_loader = get_loader("train", question_vocab, ans_vocab,
+    train_data_loader = get_loader("train", question_vocab, ans_vocab, "data/features/",
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
 
     validate = True
-    val_data_loader = get_loader("val", question_vocab, ans_vocab,
+    val_data_loader = get_loader("test", question_vocab, ans_vocab, "data/features/",
                              train_transform, args.val_batch_size,
                              shuffle=False, num_workers=args.num_workers)
 
@@ -78,11 +78,7 @@ def run(save_path, args):
         netM.cuda()
         criterion = criterion.cuda()
 
-    params = [
-                {'params': netR.parameters()},
-                {'params': netM.parameters()}
-                
-            ]
+    params    = list(netR.parameters()) + list(netM.parameters())
     optimizer = torch.optim.RMSprop(params, lr=args.learning_rate)
 
     data_loader = iter(train_data_loader)
@@ -114,14 +110,17 @@ def run(save_path, args):
         visual_features = images
         text_features   = netR(captions, lengths)
         out             = netM(visual_features, text_features)
-        #out, out_type = netM(visual_features, text_features)
+        #out, out_type   = netM(visual_features, text_features)
 
-        loss = criterion(out, ans)# + criterion(out_type, question_type)
+        loss = criterion(out, ans) #+ criterion(out_type, question_type)
         loss.backward()
-        torch.nn.utils.clip_grad_norm(netR.parameters(), args.clip)
-        torch.nn.utils.clip_grad_norm(netM.parameters(), args.clip)
+        torch.nn.utils.clip_grad_norm(params, args.clip)
         optimizer.step()
 
+
+        if iteration == args.kick or iteration == args.kick * 2:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = 2 * param_group['lr']
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = 0.99997592083 * param_group['lr']
@@ -137,6 +136,8 @@ def run(save_path, args):
             log_value('Perplexity', np.exp(loss.data[0]), iteration)
 
         if (iteration+1) % args.save_step == 0:
+            torch.save(netR.state_dict(), os.path.join(save_path,'netR.pkl'))
+            torch.save(netM.state_dict(), os.path.join(save_path,'netM.pkl'))
             export(netR, netM, val_data_loader,
              criterion, question_vocab,ans_vocab, iteration, save_path, validate=validate)
 
@@ -163,6 +164,7 @@ def export(netR, netM, data_loader, criterion,
         text_features   = netR(captions, lengths)
 
         outputs = netM(visual_features, text_features)
+
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
 
@@ -236,10 +238,11 @@ if __name__ == '__main__':
     parser.add_argument('--netG', type=str)
     parser.add_argument('--encoder', type=str)
 
-    parser.add_argument('--batch_size', type=int, default=200)
-    parser.add_argument('--val_batch_size', type=int, default=256)
+    parser.add_argument('--batch_size', type=int, default=100)
+    parser.add_argument('--val_batch_size', type=int, default=100)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=3e-4)
+    parser.add_argument('--kick', type=int, default=50000)
     parser.add_argument('--seed', type=int, default=123)
     args = parser.parse_args()
     print(args)

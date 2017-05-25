@@ -17,13 +17,16 @@ import h5py
 
 class CocoDataset(data.Dataset):
     """COCO Custom Dataset compatible with torch.utils.data.DataLoader."""
-    def __init__(self, mode, question_vocab, ans_vocab, finetune=False,transform=None, classification=True):
+    def __init__(self, mode, question_vocab, ans_vocab,feature_path, finetune=False,transform=None, classification=True):
         if mode == "test":
             self.root = "data/Images/mscoco/test2015"
-            self.pickle_feature_path = "data/features_test/"
+            self.pickle_feature_path = feature_path
+            #self.pickle_feature_path = "/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/datasets/mscoco/features_test_598"
+            
         else:
             self.root = "data/Images/mscoco/merged2014"
-            self.pickle_feature_path = "data/features/"
+            self.pickle_feature_path = feature_path
+            #self.pickle_feature_path = "/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/datasets/mscoco/features_598"
         
         self.coco = COCO("data/vqa_{}.json".format(mode))
         self.ids = list(self.coco.anns.keys())
@@ -45,7 +48,7 @@ class CocoDataset(data.Dataset):
         ans_vocab      = self.ans_vocab
         ann_id         = self.ids[index]
 
-        question = coco.anns[ann_id]['final_question']
+        question = coco.anns[ann_id]['question']
         img_id   = coco.anns[ann_id]['image_id']
 
         if self.finetune:
@@ -57,7 +60,16 @@ class CocoDataset(data.Dataset):
             filename = str(img_id) + ".npz"
             path = os.path.join(self.pickle_feature_path, filename)
             image = np.load(path)['arr_0']
+
+            # image = image.reshape(image.shape[0], -1)
+            # for i in range(image.shape[1]):
+            #     image_feature = image[:,i]
+            #     image_feature = image_feature / (image_feature.max() - image_feature.min())
+            #     image[:,i]    = (image_feature - image_feature.mean()) / (image_feature.std())
+
             image = torch.from_numpy(image)
+
+
 
         question = torch.Tensor(question)
 
@@ -158,13 +170,14 @@ def collate_fn_vqa(data):
 
     return images, targets, lengths, ann_id,ans, question_type #ans_targets, ans_lengths
 
-def get_loader(mode, question_vocab,ans_vocab, transform, batch_size, shuffle, num_workers):
+def get_loader(mode, question_vocab,ans_vocab, feature_path, transform, batch_size, shuffle, num_workers):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""
     print(mode)
     # COCO caption dataset
     coco = CocoDataset(mode=mode,
                    question_vocab=question_vocab,
                    ans_vocab=ans_vocab,
+                   feature_path=feature_path,
                    transform=transform)
     
     if mode in ["test", "val"]:

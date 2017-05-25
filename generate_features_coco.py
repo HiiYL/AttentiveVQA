@@ -83,6 +83,8 @@ def train(save_path, args):
     if torch.cuda.is_available():
         encoder = encoder.cuda()
 
+    save_path = "/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/datasets/mscoco/features_test_598"
+
     # Train the Models
     total_step = len(data_loader)
     total_iterations = 0
@@ -96,9 +98,9 @@ def train(save_path, args):
         features = encoder(images)
         for j in range(images.size(0)):
             key = str(img_id.numpy()[j])
-            path = os.path.join("data/features_test/", key)
+            path = os.path.join(save_path, key)
             value = features[j].data.cpu().float().numpy()
-            np.savez_compressed(path, value)
+            np.save(path, value)
 
         # Print log info
         if total_iterations % args.log_step == 0:
@@ -113,7 +115,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/' ,
                         help='path for saving trained models')
-    parser.add_argument('--crop_size', type=int, default=299 ,
+    parser.add_argument('--crop_size', type=int, default=598 ,
                         help='size for randomly cropping images')
     parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
                         help='path for vocabulary wrapper')
