@@ -3,9 +3,9 @@ import nltk
 from collections import Counter
 import cPickle as pickle
 from build_vocab import Vocabulary
-import spacy
 
 from tqdm import tqdm
+import spacy
 
 topk                   = 2000
 vqa_val_save_path      = "data/vqa_val.json"
@@ -52,7 +52,7 @@ def prepare_data(coco_data, ques, anno=None):
             annotations.append({
             'id': question_id, 'image_id': image_id,
              'question': question,'ans': ans,
-             'question_type': ques_type, 'ans_type': ans_type})#, 'MC_ans': mc_ans})
+             'question_type': ques_type, 'ans_type': ans_type, 'MC_ans': mc_ans})
         vqa["annotations"] = annotations
     
     vqa["images"] =  coco_data["images"]
@@ -66,7 +66,7 @@ def merge(vqa_1, vqa_2):
 
     return vqa_merged
 
-def prepare_answers_vocab(annotations):
+def prepare_answers_vocab(annotations, topk=2000):
     s = 'ans'
     
     counter = Counter()
@@ -93,7 +93,7 @@ def ans_type_to_idx(annotations):
 
     uniques = list(set(ans_type))
     ans_type_vocab = Vocabulary()
-    
+
     for i, word in enumerate(uniques):
         ans_type_vocab.add_word(word)
 
@@ -127,18 +127,22 @@ def convert_field_to_index(annotations, vocab, field, out_field=None):
         current_input = annotation[field]
         out_field = out_field or field
         if isinstance(annotation[field], list):
-            annotation[out_field] = [ vocab(item) for item in annotation[field] ]
+            annotation[out_field] = [ vocab(item) for item in annotation[field] if item in vocab.word2idx ]
         else:
             annotation[out_field] = vocab(annotation[field])
 
     return annotations
 
-def tokenize(annotations, field, out_field=None):
+def tokenize(annotations, field, out_field=None, tokenizer="spacy"):
+    nlp = spacy.load('en')
     for annotation in tqdm(annotations):
         current_input = annotation[field]
         out_field = out_field or field
-        caption = str(current_input)
-        tokens = nltk.tokenize.word_tokenize(caption)
+        if tokenizer == "spacy":
+            tokens = [w.text for w in nlp(current_input)]
+        else:
+            caption = str(current_input)
+            tokens = nltk.tokenize.word_tokenize(caption)
 
         annotation[out_field] = tokens
 
@@ -175,6 +179,21 @@ def trim(annotations, ans_vocab, s='ans'):
     print("question number reduced from {} to {} ( {:.2f} % )"
         .format(initial_length,  len(trimmed) , percentage_remaining))
     return trimmed
+
+
+def calculate_confidence(annotations):
+    # def relative_frequency(lst, element):
+    #     return lst.count(element) / float(len(lst))
+    for annotation in tqdm(annotations):
+        confidence = annotation["MC_ans"].count(annotation["ans"]) / 10.0
+        annotation["confidence"] = confidence
+        # uniques = set(annotation["MC_ans"])
+        # relative_weights = []
+        # for unique in uniques:
+        #     relative_weights.append({unique: relative_frequency(annotation["MC_ans"], unique)})
+        #annotation["relative_weights"] = relative_weights
+
+    return annotations
 
 if __name__ == '__main__':
     if split == 1:
@@ -231,7 +250,9 @@ if __name__ == '__main__':
     print("Adding answer type indices")
     vqa_train["annotations"] = ans_type_to_idx(vqa_train["annotations"])
 
-    #vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "MC_ans")
+    print("Adding MC_ans indices and calculating answer confidence")
+    vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "MC_ans")
+    vqa_train["annotations"] = calculate_confidence(vqa_train["annotations"])
 
     print("Saving VQA training data ...")
     json.dump(vqa_train, open(vqa_train_save_path, "w"))
