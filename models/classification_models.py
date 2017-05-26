@@ -18,7 +18,7 @@ class MultimodalAttentionRNN(nn.Module):
         super(MultimodalAttentionRNN, self).__init__()
         self.block1 = MLBBlock(2400, 1200, glimpse)
         #self.block2 = MLBBlock(1200 * glimpse, 1200, glimpse)
-        #self.block3 = MLBBlock(1200, 1200, glimpse)
+        #self.block3 = MLBBlock(1200 * glimpse, 1200, glimpse)
 
         self.classifier = nn.Sequential(
             nn.Dropout(),
@@ -27,6 +27,8 @@ class MultimodalAttentionRNN(nn.Module):
             nn.Dropout(),
             nn.Linear(1200 * glimpse, len_vocab)
         )
+
+        #self.classifier_aux = nn.Linear(1200 * glimpse, 1)
 
         # self.classifier_qtype = nn.Sequential(
         #     nn.Dropout(),
@@ -46,17 +48,19 @@ class MultimodalAttentionRNN(nn.Module):
 
     def forward(self,v,q):
 
-        x = self.block1(v,q)
+        for i in range(3):
+            x = self.block1(v,q)
         #x = self.block2(v,x)
         #x = self.block3(v,x)
         out = self.classifier(x)
 
         # if self.training:
-        #     out_type = self.classifier_qtype(x)
-        #     return out, out_type
+        #     #out_type = self.classifier_qtype(x)
+        #     out_confidence = self.classifier_aux(x)
+        #     return out, out_confidence
         # else:
+        #     return out
         return out
-
 
 class MLBBlock(nn.Module):
     def __init__(self, input_size, output_size, glimpse):
@@ -72,19 +76,25 @@ class MLBBlock(nn.Module):
             nn.Linear(input_size,output_size),
             nn.Tanh(),
         )
+
         self.attn_block = nn.Conv2d(1200, glimpse, kernel_size=1,stride=1,padding=0)
 
-        visual_embed = []
-        for i in range(glimpse):
-            visual_embed.append(
-                nn.Sequential(
-                    nn.Dropout(),
-                    nn.Linear(2048,output_size),
-                    nn.Tanh()
-                )
-            )
-        self.visual_embed = ListModule(*visual_embed)
+        # visual_embed = []
+        # for i in range(glimpse):
+        #     visual_embed.append(
+        #         nn.Sequential(
+        #             nn.Dropout(),
+        #             nn.Linear(2048,output_size),
+        #             nn.Tanh()
+        #         )
+        #     )
+        # self.visual_embed = ListModule(*visual_embed)
 
+        self.visual_embed = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(2048 * glimpse, output_size * glimpse),
+            nn.Tanh()
+        )
         self.question_block = nn.Sequential(
             nn.Dropout(),
             nn.Linear(input_size,output_size * glimpse),
@@ -134,7 +144,8 @@ class MLBBlock(nn.Module):
         # 200 x glimpse x 2048
 
         b, s, d = v.size()
-        V = torch.cat([ self.visual_embed[i](v[:,i,:]) for i in range(s) ], 1)
+        #V = torch.cat([ self.visual_embed[i](v[:,i,:]) for i in range(s) ], 1)
+        V = self.visual_embed(v.view(b, -1))
         # 200 x glimpse * 1200
         Q = self.question_block(q)
 

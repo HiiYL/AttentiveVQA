@@ -34,6 +34,8 @@ from tqdm import tqdm, trange
 def run(save_path, args):
     torch.manual_seed(args.seed)
 
+    split = 2 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
+
     # Create model directory
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
@@ -58,12 +60,14 @@ def run(save_path, args):
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
     
-    train_data_loader = get_loader("train", question_vocab, ans_vocab, "data/features/",
+    train_data_loader = get_loader("train", question_vocab, ans_vocab, "data/features_598/",
                              train_transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
 
-    validate = True
-    val_data_loader = get_loader("test", question_vocab, ans_vocab, "data/features/",
+    validate = (split == 1)
+    val_data_path = "data/features_598/" if split == 1 else "data/features_testdev_598"
+
+    val_data_loader = get_loader("test", question_vocab, ans_vocab, val_data_path,
                              train_transform, args.val_batch_size,
                              shuffle=False, num_workers=args.num_workers)
 
@@ -89,15 +93,18 @@ def run(save_path, args):
 
     for iteration in t:
         try:
-            (images, captions, lengths, ann_id, ans, question_type) = next(data_loader)
+            (images, captions, lengths, ann_id, ans, question_type, relative_weights) = next(data_loader)
         except StopIteration:
             data_loader = iter(train_data_loader)
-            (images, captions, lengths, ann_id, ans, question_type) = next(data_loader)
+            (images, captions, lengths, ann_id, ans, question_type, relative_weights) = next(data_loader)
+
         # Set mini-batch dataset
         images        = Variable(images)
         captions      = Variable(captions)
         ans           = Variable(ans)
         question_type = Variable(question_type)
+        #confidence    = Variable(confidence)
+        relative_weights = list(relative_weights)
 
         if torch.cuda.is_available():
             images = images.cuda()
@@ -110,9 +117,18 @@ def run(save_path, args):
         visual_features = images
         text_features   = netR(captions, lengths)
         out             = netM(visual_features, text_features)
-        #out, out_type   = netM(visual_features, text_features)
+        #out, out_conf   = netM(visual_features, text_features)
 
-        loss = criterion(out, ans) #+ criterion(out_type, question_type)
+        #loss = criterion(out, ans) #+ criterion_l1(out_conf,confidence)
+
+        # turn on for instant performance boooosstt
+        loss = 0
+        for i, relative_weight in enumerate(relative_weights):
+            for (target, weight) in relative_weight:
+                target = Variable(torch.cuda.LongTensor([target]))
+                loss += weight * criterion(out[None,i], target)
+        loss /= len(relative_weights)
+
         loss.backward()
         torch.nn.utils.clip_grad_norm(params, args.clip)
         optimizer.step()
@@ -175,6 +191,7 @@ def export(netR, netM, data_loader, criterion,
     json_save_dir = os.path.join(save_path, "{}_OpenEnded_mscoco_val2014_fake_results.json".format(iteration))
     json.dump(responses, open(json_save_dir, "w"))
 
+    print("")
     print("")
 
     if validate:

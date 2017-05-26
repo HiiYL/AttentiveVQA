@@ -16,7 +16,7 @@ question_vocab_path           = 'data/question_vocab.pkl'
 question_type_vocab_save_path = 'data/question_type_vocab.pkl'
 ans_vocab_save_path           = 'data/ans_vocab.pkl'
 
-split = 1
+split = 2
 
 print("Loading Annotations ...")
 coco_caption = json.load(open('data/captions_train2014.json', 'r'))
@@ -181,17 +181,18 @@ def trim(annotations, ans_vocab, s='ans'):
     return trimmed
 
 
+def relative_frequency(lst, element):
+    return lst.count(element) / float(len(lst))
+
 def calculate_confidence(annotations):
-    # def relative_frequency(lst, element):
-    #     return lst.count(element) / float(len(lst))
     for annotation in tqdm(annotations):
-        confidence = annotation["MC_ans"].count(annotation["ans"]) / 10.0
-        annotation["confidence"] = confidence
-        # uniques = set(annotation["MC_ans"])
-        # relative_weights = []
-        # for unique in uniques:
-        #     relative_weights.append({unique: relative_frequency(annotation["MC_ans"], unique)})
-        #annotation["relative_weights"] = relative_weights
+        #confidence = annotation["MC_ans"].count(annotation["ans"]) / 10.0
+        #annotation["confidence"] = confidence
+        uniques = set(annotation["MC_ans"])
+        relative_weights = []
+        for unique in uniques:
+            relative_weights.append((unique, relative_frequency(annotation["MC_ans"], unique)))
+        annotation["relative_weights"] = relative_weights
 
     return annotations
 

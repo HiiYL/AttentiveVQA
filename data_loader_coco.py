@@ -60,13 +60,6 @@ class CocoDataset(data.Dataset):
             filename = str(img_id) + ".npz"
             path = os.path.join(self.pickle_feature_path, filename)
             image = np.load(path)['arr_0']
-
-            # image = image.reshape(image.shape[0], -1)
-            # for i in range(image.shape[1]):
-            #     image_feature = image[:,i]
-            #     image_feature = image_feature / (image_feature.max() - image_feature.min())
-            #     image[:,i]    = (image_feature - image_feature.mean()) / (image_feature.std())
-
             image = torch.from_numpy(image)
 
 
@@ -90,8 +83,13 @@ class CocoDataset(data.Dataset):
 
         question_type = torch.LongTensor([qtype])
 
+        #confidence = coco.anns[ann_id]['confidence']
+        #confidence = torch.FloatTensor([confidence])
 
-        return image, question, ann_id, ans, question_type
+        relative_weights = coco.anns[ann_id]['relative_weights']
+
+
+        return image, question, ann_id, ans, question_type, relative_weights#confidence
 
     def __len__(self):
         return len(self.ids)
@@ -146,12 +144,13 @@ def collate_fn_vqa(data):
     """
     # Sort a data list by caption length (descending order).
     data.sort(key=lambda x: len(x[1]), reverse=True)
-    images, captions, ann_id, ans, question_type = zip(*data)
+    images, captions, ann_id, ans, question_type, relative_weights = zip(*data)
 
     # Merge images (from tuple of 3D tensor to 4D tensor).
     images           = torch.stack(images, 0)
     ans              = torch.cat(ans, 0)
     question_type    = torch.cat(question_type, 0)
+    #confidence       = torch.stack(confidence, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).
 
@@ -168,7 +167,7 @@ def collate_fn_vqa(data):
     #     end = ans_lengths[i]
     #     ans_targets[i, :end] = cap[:end]
 
-    return images, targets, lengths, ann_id,ans, question_type #ans_targets, ans_lengths
+    return images, targets, lengths, ann_id,ans, question_type, relative_weights #ans_targets, ans_lengths
 
 def get_loader(mode, question_vocab,ans_vocab, feature_path, transform, batch_size, shuffle, num_workers):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""

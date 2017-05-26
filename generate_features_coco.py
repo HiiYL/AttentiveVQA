@@ -14,13 +14,14 @@ cudnn.benchmark = True
 import numpy as np
 import os
 from build_vocab import Vocabulary
-from models_spatial import EncoderCNN
+from models.encoder import EncoderCNN
 import cPickle as pickle
 import datetime
 import torchvision.datasets as dset
 from torchvision import models
 
 import time
+from tqdm import tqdm
 
 from tensorboard_logger import configure, log_value
 import h5py
@@ -69,8 +70,8 @@ def train(save_path, args):
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
     coco = CocoImgDataset(
-        image_dir="data/Images/mscoco/test2015",
-         annotation_dir="data/vqa_test.json",
+        image_dir="/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/Images/mscoco/test2015",
+         annotation_dir="data/image_info_test-dev2015.json",
          transform=transform)
 
     data_loader = torch.utils.data.DataLoader(dataset=coco, 
@@ -83,13 +84,13 @@ def train(save_path, args):
     if torch.cuda.is_available():
         encoder = encoder.cuda()
 
-    save_path = "/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/datasets/mscoco/features_test_598"
+    save_path = "data/features_testdev_598"
 
     # Train the Models
     total_step = len(data_loader)
     total_iterations = 0
     encoder.eval()
-    for i, (images,img_id) in enumerate(data_loader):
+    for (images,img_id) in tqdm(data_loader):
         # Set mini-batch dataset
         images = Variable(images, volatile=True)
         if torch.cuda.is_available():
@@ -100,13 +101,8 @@ def train(save_path, args):
             key = str(img_id.numpy()[j])
             path = os.path.join(save_path, key)
             value = features[j].data.cpu().float().numpy()
-            np.save(path, value)
+            np.savez_compressed(path, value)
 
-        # Print log info
-        if total_iterations % args.log_step == 0:
-            print('Step [%d/%d] - Generating Features' %(i, total_step))
-
-        total_iterations += 1
     #f.close()
 
 
@@ -141,7 +137,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
     
     parser.add_argument('--num_epochs', type=int, default=500)
-    parser.add_argument('--batch_size', type=int, default=64)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
