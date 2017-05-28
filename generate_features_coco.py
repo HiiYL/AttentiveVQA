@@ -71,7 +71,7 @@ def train(save_path, args):
     
     coco = CocoImgDataset(
         image_dir="/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/Images/mscoco/test2015",
-         annotation_dir="data/image_info_test-dev2015.json",
+         annotation_dir="data/image_info_test2015.json",
          transform=transform)
 
     data_loader = torch.utils.data.DataLoader(dataset=coco, 
@@ -84,7 +84,7 @@ def train(save_path, args):
     if torch.cuda.is_available():
         encoder = encoder.cuda()
 
-    save_path = "data/features_testdev_598"
+    save_path = "data/features_test_598"
 
     # Train the Models
     total_step = len(data_loader)

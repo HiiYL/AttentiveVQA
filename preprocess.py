@@ -8,7 +8,6 @@ from tqdm import tqdm
 import spacy
 
 topk                   = 2000
-vqa_val_save_path      = "data/vqa_val.json"
 vqa_train_save_path    = "data/vqa_train.json"
 vqa_test_save_path     = "data/vqa_test.json"
 
@@ -16,7 +15,7 @@ question_vocab_path           = 'data/question_vocab.pkl'
 question_type_vocab_save_path = 'data/question_type_vocab.pkl'
 ans_vocab_save_path           = 'data/ans_vocab.pkl'
 
-split = 2
+split = 1
 
 print("Loading Annotations ...")
 coco_caption = json.load(open('data/captions_train2014.json', 'r'))
@@ -66,7 +65,7 @@ def merge(vqa_1, vqa_2):
 
     return vqa_merged
 
-def prepare_answers_vocab(annotations, topk=2000):
+def prepare_answers_vocab(annotations, topk):
     s = 'ans'
     
     counter = Counter()
@@ -221,7 +220,7 @@ if __name__ == '__main__':
         vqa_test  = prepare_data(coco_images_test, test_ques)
         
     print("Preparing Answers Vocab ... ")
-    ans_vocab = prepare_answers_vocab(vqa_train["annotations"])
+    ans_vocab = prepare_answers_vocab(vqa_train["annotations"], topk)
 
     print("Counting training samples to remove ... ")
     vqa_train["annotations"] = trim(vqa_train["annotations"], ans_vocab, s='ans')

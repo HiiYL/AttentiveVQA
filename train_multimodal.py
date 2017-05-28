@@ -34,7 +34,7 @@ from tqdm import tqdm, trange
 def run(save_path, args):
     torch.manual_seed(args.seed)
 
-    split = 2 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
+    split = 1 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
 
     # Create model directory
     if not os.path.exists(args.model_path):
@@ -65,7 +65,7 @@ def run(save_path, args):
                              shuffle=True, num_workers=args.num_workers)
 
     validate = (split == 1)
-    val_data_path = "data/features_598/" if split == 1 else "data/features_testdev_598"
+    val_data_path = "data/features_598/" if split == 1 else "data/features_test_598"
 
     val_data_loader = get_loader("test", question_vocab, ans_vocab, val_data_path,
                              train_transform, args.val_batch_size,
@@ -74,6 +74,16 @@ def run(save_path, args):
     # Build the models
     netR = EncoderSkipThought(question_vocab)
     netM = MultimodalAttentionRNN(len(ans_vocab))
+
+    if args.netR:
+        print("[!]loading pretrained netR....")
+        netR.load_state_dict(torch.load(args.netR))
+        print("Done!")
+
+    if args.netM:
+        print("[!]loading pretrained decoder....")
+        netM.load_state_dict(torch.load(args.netM))
+        print("Done!")
 
     criterion = nn.CrossEntropyLoss()
 
@@ -119,15 +129,15 @@ def run(save_path, args):
         out             = netM(visual_features, text_features)
         #out, out_conf   = netM(visual_features, text_features)
 
-        #loss = criterion(out, ans) #+ criterion_l1(out_conf,confidence)
+        loss = criterion(out, ans) #+ criterion_l1(out_conf,confidence)
 
         # turn on for instant performance boooosstt
-        loss = 0
-        for i, relative_weight in enumerate(relative_weights):
-            for (target, weight) in relative_weight:
-                target = Variable(torch.cuda.LongTensor([target]))
-                loss += weight * criterion(out[None,i], target)
-        loss /= len(relative_weights)
+        # loss = 0
+        # for i, relative_weight in enumerate(relative_weights):
+        #     for (target, weight) in relative_weight:
+        #         target = Variable(torch.cuda.LongTensor([target]))
+        #         loss += weight * criterion(out[None,i], target)
+        # loss /= len(relative_weights)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm(params, args.clip)
@@ -151,7 +161,7 @@ def run(save_path, args):
             log_value('Loss', loss.data[0], iteration)
             log_value('Perplexity', np.exp(loss.data[0]), iteration)
 
-        if (iteration+1) % args.save_step == 0:
+        if (iteration + 1) % args.save_step == 0:
             torch.save(netR.state_dict(), os.path.join(save_path,'netR.pkl'))
             torch.save(netM.state_dict(), os.path.join(save_path,'netM.pkl'))
             export(netR, netM, val_data_loader,
@@ -252,8 +262,8 @@ if __name__ == '__main__':
                         help='number of layers in gru')
     parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
-    parser.add_argument('--netG', type=str)
-    parser.add_argument('--encoder', type=str)
+    parser.add_argument('--netM', type=str)#, default="logs/coco/26052017171211/netM.pkl")
+    parser.add_argument('--netR', type=str)#, default="logs/coco/26052017171211/netR.pkl")
 
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--val_batch_size', type=int, default=100)

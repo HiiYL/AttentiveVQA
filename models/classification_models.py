@@ -17,7 +17,7 @@ class MultimodalAttentionRNN(nn.Module):
     def __init__(self, len_vocab, glimpse=2):
         super(MultimodalAttentionRNN, self).__init__()
         self.block1 = MLBBlock(2400, 1200, glimpse)
-        #self.block2 = MLBBlock(1200 * glimpse, 1200, glimpse)
+        self.block2 = MLBBlock(1200 * glimpse, 1200, glimpse)
         #self.block3 = MLBBlock(1200 * glimpse, 1200, glimpse)
 
         self.classifier = nn.Sequential(
@@ -47,11 +47,11 @@ class MultimodalAttentionRNN(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self,v,q):
-
-        for i in range(3):
-            x = self.block1(v,q)
-        #x = self.block2(v,x)
-        #x = self.block3(v,x)
+        for _ in range(3):
+            q = self.block1(v,q)
+        x = self.block2(v,q)
+        # z = self.block3(v,y)
+        # x = x + z
         out = self.classifier(x)
 
         # if self.training:
