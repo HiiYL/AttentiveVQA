@@ -15,7 +15,7 @@ import os
 from data_loader_coco import get_loader 
 from build_vocab import Vocabulary
 from models.encoder import EncoderCNN, EncoderRNN, EncoderFC, EncoderSkipThought
-from models.classification_models import G_Spatial, MultimodalRNN, MultimodalAttentionRNN
+from models.classification_models import MultimodalAttentionRNN
 import pickle
 import datetime
 
@@ -34,7 +34,7 @@ from tqdm import tqdm, trange
 def run(save_path, args):
     torch.manual_seed(args.seed)
 
-    split = 1 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
+    split = 2 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
 
     # Create model directory
     if not os.path.exists(args.model_path):
@@ -97,7 +97,7 @@ def run(save_path, args):
 
     data_loader = iter(train_data_loader)
 
-    total_iterations = 250000
+    total_iterations = 2500000
     t = trange(0, total_iterations)
 
 
@@ -124,20 +124,20 @@ def run(save_path, args):
 
         netR.zero_grad()
         netM.zero_grad()
-        visual_features = images
-        text_features   = netR(captions, lengths)
-        out             = netM(visual_features, text_features)
+        visual_features                  = images
+        text_features, text_all_output   = netR(captions, lengths)
+        out                              = netM(visual_features, text_features, text_all_output, lengths)
         #out, out_conf   = netM(visual_features, text_features)
 
-        loss = criterion(out, ans) #+ criterion_l1(out_conf,confidence)
+        #loss = criterion(out, ans) #+ criterion_l1(out_conf,confidence)
 
         # turn on for instant performance boooosstt
-        # loss = 0
-        # for i, relative_weight in enumerate(relative_weights):
-        #     for (target, weight) in relative_weight:
-        #         target = Variable(torch.cuda.LongTensor([target]))
-        #         loss += weight * criterion(out[None,i], target)
-        # loss /= len(relative_weights)
+        loss = 0
+        for i, relative_weight in enumerate(relative_weights):
+            for (target, weight) in relative_weight:
+                target = Variable(torch.cuda.LongTensor([target]))
+                loss += weight * criterion(out[None,i], target)
+        loss /= len(relative_weights)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm(params, args.clip)
@@ -187,9 +187,10 @@ def export(netR, netM, data_loader, criterion,
             captions = captions.cuda()
 
         visual_features = images
-        text_features   = netR(captions, lengths)
+        #text_features   = netR(captions, lengths)
+        text_features, text_all_output   = netR(captions, lengths)
 
-        outputs = netM(visual_features, text_features)
+        outputs = netM(visual_features, text_features, text_all_output, lengths)
 
         outputs = torch.max(outputs,1)[1]
         outputs = outputs.cpu().data.numpy().squeeze().tolist()
@@ -248,9 +249,9 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=10000,
+    parser.add_argument('--save_step', type=int , default=25000,
                         help='step size for saving trained models')
-    parser.add_argument('--val_step', type=int , default=10000,
+    parser.add_argument('--val_step', type=int , default=25000,
                         help='step size for saving trained models')
     
     # Model parameters

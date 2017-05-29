@@ -17,7 +17,7 @@ class MultimodalAttentionRNN(nn.Module):
     def __init__(self, len_vocab, glimpse=2):
         super(MultimodalAttentionRNN, self).__init__()
         self.block1 = MLBBlock(2400, 1200, glimpse)
-        #self.block2 = MLBBlock(1200 * glimpse, 1200, glimpse)
+        self.block2 = MLBBlockReversed(1200 * glimpse, 1200, glimpse)
         #self.block3 = MLBBlock(1200 * glimpse, 1200, glimpse)
 
         self.classifier = nn.Sequential(
@@ -46,13 +46,19 @@ class MultimodalAttentionRNN(nn.Module):
                 kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
 
-    def forward(self,v,q):
-        #for _ in range(3):
-        x = self.block1(v,q)
+    def forward(self,v,q, q_full, lengths):
+        batch_size = q.size(0)
+
+        V = self.block1(v,q)
+
+        v_gap = F.avg_pool2d(v, kernel_size=v.size()[2:])
+        Q = self.block2(v_gap, q_full, lengths)
+
+        z = V * Q
         # y = self.block2(v,x)
         # z = self.block3(v,y)
         # x = x + z
-        out = self.classifier(x)
+        out = self.classifier(z)
 
         # if self.training:
         #     #out_type = self.classifier_qtype(x)
@@ -95,11 +101,11 @@ class MLBBlock(nn.Module):
             nn.Linear(2048 * glimpse, output_size * glimpse),
             nn.Tanh()
         )
-        self.question_block = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(input_size,output_size * glimpse),
-            nn.Tanh(),
-        )
+        # self.question_block = nn.Sequential(
+        #     nn.Dropout(),
+        #     nn.Linear(input_size,output_size * glimpse),
+        #     nn.Tanh(),
+        # )
         self._initialize_weights()
 
 
@@ -147,214 +153,88 @@ class MLBBlock(nn.Module):
         #V = torch.cat([ self.visual_embed[i](v[:,i,:]) for i in range(s) ], 1)
         V = self.visual_embed(v.view(b, -1))
         # 200 x glimpse * 1200
-        Q = self.question_block(q)
+        #Q = self.question_block(q)
 
-        out = V * Q
+        #out = V * Q
 
-        return out
+        return V #out
 
-
-class G_Spatial(nn.Module):
-    def __init__(self, embed_size, hidden_size, question_vocab, ans_vocab, num_layers):
-        """Set the hyper-parameters and build the layers."""
-        super(G_Spatial, self).__init__()
-        self.encode_fc = EncoderFC()
-
-        self.question_vocab = question_vocab
-        self.ans_vocab      = ans_vocab
-
-        self.question_vocab_size = len(question_vocab)
-        self.ans_vocab_size      = len(ans_vocab)
-
-        self.hidden_size = hidden_size
-        self.embed_size = embed_size
-
-        self.embed = nn.Embedding(self.question_vocab_size, embed_size)
-
-        self.lstm    = LSTMCustom(embed_size, hidden_size)
-        #self.lstm2   = LSTMCustom(embed_size, hidden_size)
-
-        self.fc  =  nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+class MLBBlockReversed(nn.Module):
+    def __init__(self, input_size, output_size, glimpse):
+        super(MLBBlockReversed, self).__init__()
+        self.glimpse = glimpse
+        self.visual_attn = nn.Sequential(
+            nn.Dropout(),
+            nn.Conv2d(2048, 1200, kernel_size=1,stride=1,padding=0),
+            nn.Tanh()
+        )
+        self.question_attn = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(input_size,output_size),
             nn.Tanh(),
-            nn.Dropout(0.5),
-            nn.Linear(hidden_size, hidden_size),
-            nn.Tanh(),
-            nn.Dropout(0.5),
-            nn.Linear(hidden_size, self.ans_vocab_size)
         )
 
-        self.log_softmax = nn.LogSoftmax()
+        self.attn_block = nn.Conv1d(1200, glimpse, kernel_size=1, stride=1)#nn.Conv2d(1200, glimpse, kernel_size=1,stride=1,padding=0)
+
+        # self.visual_embed = nn.Sequential(
+        #     nn.Dropout(),
+        #     nn.Linear(2048, output_size * glimpse),
+        #     nn.Tanh()
+        # )
+        self.question_block = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(input_size * glimpse,output_size * glimpse),
+            nn.Tanh(),
+        )
+        self.adaptive_q_pool = nn.AdaptiveAvgPool1d(20) #nn.AdaptiveAvgPool2d((20,input_size))#
         self._initialize_weights()
+
 
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 kaiming_uniform(m.weight.data)
                 m.bias.data.zero_()
+            elif isinstance(m, nn.Conv2d):
+                kaiming_uniform(m.weight.data)
+                m.bias.data.zero_()
 
-         
-    def forward(self, features, captions, lengths, states):
-        """Decode image feature vectors and generates captions."""
-        features_global, features_local = self.encode_fc(features)
-        embeddings = self.embed(captions)
+    def forward(self,v, q, lengths):
+        v_atten  = self.visual_attn(v)
+        batch_size, depth, height, width = v_atten.size()
+        v_atten     = v_atten.view(batch_size, 1, depth)
+        q = q.permute(0,2,1)
+        q = self.adaptive_q_pool(q)
+        q = q.permute(0,2,1).contiguous()
+        # 100 x 20 x 2400
+        b, s, d = q.size()
+        q_atten  = self.question_attn(q.view(b * s, d)).view(b,s,-1)
+        # 100 x 20 x 1200
 
-        embeddings = torch.cat((features_global.unsqueeze(1), embeddings), 1)
-        batch_size = features_global.size(0)
+        v_replicate = v_atten.expand_as(q_atten)
+        # 100 x 20 x 1200
 
-        hiddens_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
-        context_tensor = Variable(torch.cuda.FloatTensor(len(lengths),lengths[0],self.hidden_size))
-        hx, cx = states
-        hx, cx = hx[0], cx[0]
-
-        if hx.size(0) != batch_size:
-            hx = hx[:batch_size]
-            cx = cx[:batch_size]
-
-        #j = lengths[0]
-        # features_global_1 = self.lstm.visual_transform(features_global)
-        # features_global_2 = self.lstm2.visual_transform(features_global)
-        for i in range(lengths[0]):
-            inputs          = embeddings[:,i,:]
-            #inputs_reversed = embeddings[:, j-i, :]
-
-            hx, cx = self.lstm( inputs, hx, cx, features_local, features_global)
-            #hx, cx = self.lstm2( inputs, hx, cx, features_local, features_global)
-            #hx, cx = self.lstm_2( inputs_reversed, hy, cy, features_local)
-
-            hiddens_tensor[ :, i, :] = hx#torch.cat((hx, hy), 1)
-            context_tensor[ :, i, :] = cx#torch.cat((cx, cy), 1)
-
-        results_tensor = hiddens_tensor + context_tensor #torch.cat((hiddens_tensor, context_tensor), 2)
-        combined = [ results_tensor[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
-        combined = torch.cat(combined, 0)
-        outputs = self.fc(combined)
-        return outputs
-
-
-class MultimodalRNN(nn.Module):
-    def __init__(self, len_vocab):
-        super(MultimodalRNN, self).__init__()
-        self.block1 = MultimodalBlock(2400, 1200)
-        self.block2 = MultimodalBlock(1200, 1200)
-        self.block3 = MultimodalBlock(1200, 1200)
-
-        self.classifier = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(1200, len_vocab)
-        )
+        attn = q_atten * v_replicate
+        attn = attn.permute(0,2,1).contiguous()
+        attn = self.attn_block(attn)
+        # 200 x glimpse x 64
         
-        self.classifier_qtype = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(1200, 65)
-        )
-        self._initialize_weights()
+        # apply softmax along each glimpse slice
+        # b - batch
+        # s - glimpse_slice
+        # d - depth ( spatial features )
+        b, s, d = attn.size()
+        attn = F.softmax(attn.view(b * s, d)).view(b, s, d)
 
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                m.weight.data.uniform_(-0.08, 0.08)#kaiming_uniform(m.weight.data)
-                m.bias.data.zero_()
+        # attn - 100 x 2 x 20 | q - 100 x 20 x 2400
+        q    = torch.bmm(attn, q)
+        # 200 x glimpse x 2048
+        #V = self.visual_embed(v.view(v.size(0), -1))
+        # 200 x glimpse * 1200
+        Q = self.question_block(q.view(q.size(0), -1))
+        #out = V * Q
 
-    def forward(self,v,q):
-        v = F.avg_pool2d(v, kernel_size=v.size()[2:])[:,:,0,0]
-
-        h1 = self.block1(v,q)
-        h2 = self.block2(v,h1)
-        h3 = self.block3(v,h2)
-
-        out = self.classifier(h3)
-        out_type = self.classifier_qtype(h3)
-
-        return out, out_type
-
-
-class MultimodalBlock(nn.Module):
-    def __init__(self, input_size, output_size):
-        super(MultimodalBlock, self).__init__()
-        self.visual_block = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(2048,2048),
-            nn.Tanh(),
-            nn.Dropout(),
-            nn.Linear(2048,output_size),
-            nn.Tanh(),
-            
-        )
-        self.question_block = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(input_size,output_size),
-            nn.Tanh(),
-        )
-        self.linear = nn.Linear(input_size,output_size)
-        self._initialize_weights()
-
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                m.weight.data.uniform_(-0.08, 0.08)#kaiming_uniform(m.weight.data)
-                m.bias.data.zero_()
-
-    def forward(self,v, q):
-        V = self.visual_block(v)
-        Q = self.question_block(q)
-
-        combined = V * Q
-
-        q_skip = self.linear(q)
-        out = q_skip + combined
-
-        return out
-
-
-
-
-class MultimodalAttentionBlock(nn.Module):
-    def __init__(self, input_size, output_size):
-        super(MultimodalAttentionBlock, self).__init__()
-        self.visual_block = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(2048,2048),
-            nn.Tanh(),
-            nn.Dropout(),
-            nn.Linear(2048,output_size),
-            nn.Tanh(),
-            
-        )
-        self.attn_block = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(input_size,64),
-            nn.Softmax(),
-        )
-        self.question_block = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(input_size,output_size),
-            nn.Tanh(),
-        )
-        self.linear = nn.Linear(input_size,output_size)
-        self._initialize_weights()
-
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                m.weight.data.uniform_(-0.08, 0.08)#kaiming_uniform(m.weight.data)
-                m.bias.data.zero_()
-
-    def forward(self,v, q):
-        attn = self.attn_block(q)
-        v = torch.bmm(v.view(v.size(0), v.size(1), -1), attn.unsqueeze(2)).squeeze(2)
-
-        V = self.visual_block(v)
-        Q = self.question_block(q)
-
-        combined = V * Q
-
-        q_skip = self.linear(q)
-        out = q_skip + combined
-
-        return out
+        return Q
 
 
 

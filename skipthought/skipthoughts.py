@@ -117,9 +117,21 @@ class AbstractSkipThoughts(nn.Module):
         for i in range(batch_size):
             mask[i][lengths[i]-1].fill_(1)
         mask = Variable(mask)
+
         x = x.mul(mask)
         x = x.sum(1).view(batch_size, 2400)
         return x
+
+    def _set_pad_to_zero(self, x, lengths):
+        batch_size = x.size(0)
+        seq_length = x.size(1)
+        mask = x.data.new().resize_as_(x.data).fill_(0)
+        for i in range(batch_size):
+            mask[i][:(lengths[i]-1)].fill_(1)
+        mask = Variable(mask)
+
+        x = x.mul(mask)
+        return x        
 
     def _select_last_old(self, input, lengths):
         batch_size = input.size(0)
@@ -289,15 +301,21 @@ class BayesianUniSkip(AbstractUniSkip):
         self.rnn.load_state_dict(state_dict)
         return self.rnn
  
-    def forward(self, input, lengths=None):
+    def forward(self, input, lengths=None, return_sequence=True):
         if lengths is None:
             lengths = self._process_lengths(input)
         max_length = max(lengths)
         x = self.embedding(input)
         x, hn = self.rnn(x, max_length=max_length) # seq2seq
         if lengths:
-            x = self._select_last(x, lengths)
-        return x
+            x_last = self._select_last(x, lengths)
+            if return_sequence:
+                x = self._set_pad_to_zero(x, lengths)
+
+        if return_sequence:
+            return x_last, x
+        else:
+            return x_last
 
 
 ###################################################################################

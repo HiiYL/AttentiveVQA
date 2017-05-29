@@ -83,9 +83,6 @@ class CocoDataset(data.Dataset):
 
         question_type = torch.LongTensor([qtype])
 
-        #confidence = coco.anns[ann_id]['confidence']
-        #confidence = torch.FloatTensor([confidence])
-
         relative_weights = coco.anns[ann_id]['relative_weights']
 
 
