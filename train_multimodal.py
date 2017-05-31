@@ -34,7 +34,7 @@ from tqdm import tqdm, trange
 def run(save_path, args):
     torch.manual_seed(args.seed)
 
-    split = 2 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
+    split = 1 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
 
     # Create model directory
     if not os.path.exists(args.model_path):
@@ -103,41 +103,37 @@ def run(save_path, args):
 
     for iteration in t:
         try:
-            (images, captions, lengths, ann_id, ans, question_type, relative_weights) = next(data_loader)
+            (images, captions, lengths, ann_id, ans, relative_weights) = next(data_loader)
         except StopIteration:
             data_loader = iter(train_data_loader)
-            (images, captions, lengths, ann_id, ans, question_type, relative_weights) = next(data_loader)
+            (images, captions, lengths, ann_id, ans, relative_weights) = next(data_loader)
 
         # Set mini-batch dataset
         images        = Variable(images)
         captions      = Variable(captions)
         ans           = Variable(ans)
-        question_type = Variable(question_type)
-        #confidence    = Variable(confidence)
         relative_weights = list(relative_weights)
 
         if torch.cuda.is_available():
             images = images.cuda()
             captions = captions.cuda()
             ans = ans.cuda()
-            question_type = question_type.cuda()
 
         netR.zero_grad()
         netM.zero_grad()
         visual_features                  = images
         text_features, text_all_output   = netR(captions, lengths)
         out                              = netM(visual_features, text_features, text_all_output, lengths)
-        #out, out_conf   = netM(visual_features, text_features)
 
-        #loss = criterion(out, ans) #+ criterion_l1(out_conf,confidence)
+        loss = criterion(out, ans)
 
         # turn on for instant performance boooosstt
-        loss = 0
-        for i, relative_weight in enumerate(relative_weights):
-            for (target, weight) in relative_weight:
-                target = Variable(torch.cuda.LongTensor([target]))
-                loss += weight * criterion(out[None,i], target)
-        loss /= len(relative_weights)
+        #loss = 0
+        #for i, relative_weight in enumerate(relative_weights):
+        #    for (target, weight) in relative_weight:
+        #        target = Variable(torch.cuda.LongTensor([target]))
+        #        loss += weight * criterion(out[None,i], target)
+        #loss /= len(relative_weights)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm(params, args.clip)
@@ -187,7 +183,6 @@ def export(netR, netM, data_loader, criterion,
             captions = captions.cuda()
 
         visual_features = images
-        #text_features   = netR(captions, lengths)
         text_features, text_all_output   = netR(captions, lengths)
 
         outputs = netM(visual_features, text_features, text_all_output, lengths)
@@ -249,9 +244,9 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=25000,
+    parser.add_argument('--save_step', type=int , default=10000,
                         help='step size for saving trained models')
-    parser.add_argument('--val_step', type=int , default=25000,
+    parser.add_argument('--val_step', type=int , default=10000,
                         help='step size for saving trained models')
     
     # Model parameters
@@ -263,8 +258,8 @@ if __name__ == '__main__':
                         help='number of layers in gru')
     parser.add_argument('--clip', type=float, default=0.25,
                     help='gradient clipping')
-    parser.add_argument('--netM', type=str)#, default="logs/coco/26052017171211/netM.pkl")
-    parser.add_argument('--netR', type=str)#, default="logs/coco/26052017171211/netR.pkl")
+    parser.add_argument('--netM', type=str)
+    parser.add_argument('--netR', type=str)
 
     parser.add_argument('--batch_size', type=int, default=100)
     parser.add_argument('--val_batch_size', type=int, default=100)

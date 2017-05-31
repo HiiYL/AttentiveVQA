@@ -81,12 +81,10 @@ class CocoDataset(data.Dataset):
             ans.extend([ans_vocab(token) for token in tokens])
             ans.append(ans_vocab('<end>'))
 
-        question_type = torch.LongTensor([qtype])
-
         relative_weights = coco.anns[ann_id]['relative_weights']
 
 
-        return image, question, ann_id, ans, question_type, relative_weights#confidence
+        return image, question, ann_id, ans, relative_weights#confidence
 
     def __len__(self):
         return len(self.ids)
@@ -141,12 +139,11 @@ def collate_fn_vqa(data):
     """
     # Sort a data list by caption length (descending order).
     data.sort(key=lambda x: len(x[1]), reverse=True)
-    images, captions, ann_id, ans, question_type, relative_weights = zip(*data)
+    images, captions, ann_id, ans, relative_weights = zip(*data)
 
     # Merge images (from tuple of 3D tensor to 4D tensor).
     images           = torch.stack(images, 0)
     ans              = torch.cat(ans, 0)
-    question_type    = torch.cat(question_type, 0)
     #confidence       = torch.stack(confidence, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).
@@ -164,7 +161,7 @@ def collate_fn_vqa(data):
     #     end = ans_lengths[i]
     #     ans_targets[i, :end] = cap[:end]
 
-    return images, targets, lengths, ann_id,ans, question_type, relative_weights #ans_targets, ans_lengths
+    return images, targets, lengths, ann_id,ans, relative_weights #ans_targets, ans_lengths
 
 def get_loader(mode, question_vocab,ans_vocab, feature_path, transform, batch_size, shuffle, num_workers):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""

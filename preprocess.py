@@ -15,7 +15,7 @@ question_vocab_path           = 'data/question_vocab.pkl'
 question_type_vocab_save_path = 'data/question_type_vocab.pkl'
 ans_vocab_save_path           = 'data/ans_vocab.pkl'
 
-split = 2
+split = 1
 
 print("Loading Annotations ...")
 coco_caption = json.load(open('data/captions_train2014.json', 'r'))
