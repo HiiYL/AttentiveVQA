@@ -15,7 +15,7 @@ question_vocab_path           = 'data/question_vocab.pkl'
 question_type_vocab_save_path = 'data/question_type_vocab.pkl'
 ans_vocab_save_path           = 'data/ans_vocab.pkl'
 
-split = 2
+split = 1
 
 split_vocab = False
 
@@ -33,32 +33,21 @@ val_ques   = json.load(open("data/Questions/v2_OpenEnded_mscoco_val2014_question
 test_ques = json.load(open("data/Questions/v2_OpenEnded_mscoco_test-dev2015_questions.json", "r"))
 
 
-def prepare_data(coco_data, ques, anno=None):
+def prepare_data(coco_data, ques, annotations=None):
     vqa = {}
-    if anno is None:
+    if annotations is None:
         for question in ques["questions"]:
             question["id"] = question["question_id"]
         vqa["annotations"] = ques["questions"]
     else:
-        annotations = []
-        for i in tqdm(range(len(anno['annotations']))):
-            ans = anno['annotations'][i]['multiple_choice_answer']
-            question_id = anno['annotations'][i]['question_id']
-            image_id = anno['annotations'][i]['image_id']
-            mc_ans    = [ item['answer'] for item in anno['annotations'][i]['answers'] ]
-            ques_type = anno['annotations'][i]['question_type']
-            ans_type  = anno['annotations'][i]['answer_type']
-
-            question  = ques['questions'][i]['question']
-            annotations.append({
-            'id': question_id, 'image_id': image_id,
-             'question': question,'ans': ans,
-             'question_type': ques_type, 'ans_type': ans_type, 'MC_ans': mc_ans})
+        for i, annotation in enumerate(tqdm(annotations)):
+            annotation['question']  = ques['questions'][i]['question']
+            annotation['id']        = annotation['question_id']
+            annotation['answers']   = [ item['answer'] for item in annotation['answers'] ]
         vqa["annotations"] = annotations
     
     vqa["images"] =  coco_data["images"]
     return vqa
-
 
 def merge(vqa_1, vqa_2):
     vqa_merged = {}
@@ -68,7 +57,7 @@ def merge(vqa_1, vqa_2):
     return vqa_merged
 
 def prepare_answers_vocab(annotations, topk):
-    s = 'ans'
+    s = 'multiple_choice_answer'
     
     counter = Counter()
     print("counting occurrences ... ")
@@ -90,7 +79,7 @@ def prepare_answers_vocab(annotations, topk):
 def ans_type_to_idx(annotations):
     ans_type = []
     for anno in annotations:
-        ans_type.append(anno['ans_type'])
+        ans_type.append(anno["answer_type"])
 
     uniques = list(set(ans_type))
     ans_type_vocab = Vocabulary()
@@ -99,11 +88,11 @@ def ans_type_to_idx(annotations):
         ans_type_vocab.add_word(word)
 
     for anno in annotations:
-        anno['ans_type'] = ans_type_vocab(anno['ans_type'])
+        anno["answer_type"] = ans_type_vocab(anno["answer_type"])
 
     pickle.dump(ans_type_vocab, open("data/ans_type_vocab.pkl", "wb"))
 
-    return annotations
+    return ans_type_vocab
 
 def prepare_question_type_vocab(annotations, topk=65):
     counter = Counter()
@@ -189,23 +178,53 @@ def relative_frequency(lst, element):
 
 def calculate_confidence(annotations):
     for annotation in tqdm(annotations):
-        #confidence = annotation["MC_ans"].count(annotation["ans"]) / 10.0
+        #confidence = annotation["multiple_choice_answer"].count(annotation["multiple_choice_answer"]) / 10.0
         #annotation["confidence"] = confidence
-        uniques = set(annotation["MC_ans"])
+        uniques = set(annotation["answers"])
         relative_weights = []
         for unique in uniques:
-            relative_weights.append((unique, relative_frequency(annotation["MC_ans"], unique)))
+            relative_weights.append((unique, relative_frequency(annotation["answers"], unique)))
         annotation["relative_weights"] = relative_weights
 
     return annotations
+
+def trim_by_type(questions, annotations, keep="number"):
+    keep_only = set()
+
+    valid_anno = []
+    for anno in annotations:
+        if anno["answer_type"] == "number":
+            valid_anno.append(anno)
+            keep_only.add(anno["question_id"])
+
+    valid_ques = []
+    for question in questions:
+        if question["question_id"] in keep_only:
+            valid_ques.append(question)
+
+    annotations = valid_anno
+    questions   = valid_ques
+
+    return questions, annotations
+
 
 if __name__ == '__main__':
     if split == 1:
         print("--------------------------------")
         print("| Train -> Train | Test -> Val |")
         print("--------------------------------")
+        
+        train_ques["questions"], train_anno["annotations"] = \
+        trim_by_type(train_ques["questions"], train_anno["annotations"])
+
+        val_ques["questions"], val_anno["annotations"] = \
+        trim_by_type(val_ques["questions"], val_anno["annotations"])
+
+        json.dump(val_anno, open("data/val_annotations_trimmed.json", "wb"))
+        json.dump(val_ques, open("data/val_questions_trimmed.json", "wb"))
+
         print("Preparing Training Data ... ")
-        vqa_train = prepare_data(coco_caption, train_ques, train_anno)
+        vqa_train = prepare_data(coco_caption, train_ques, train_anno["annotations"])
 
         print("Preparing Validation Data ... ")
         vqa_test   = prepare_data(coco_caption_val, val_ques)
@@ -215,8 +234,8 @@ if __name__ == '__main__':
         print("| Train -> Train + Val | Test -> Test |")
         print("---------------------------------------")
         print("Preparing Training Data ... ")
-        vqa_train = prepare_data(coco_caption    , train_ques, train_anno)
-        vqa_val   = prepare_data(coco_caption_val, val_ques  , val_anno)
+        vqa_train = prepare_data(coco_caption    , train_ques, train_anno["annotations"])
+        vqa_val   = prepare_data(coco_caption_val, val_ques  , val_anno["annotations"])
 
         vqa_train = merge(vqa_train, vqa_val)
 
@@ -224,33 +243,33 @@ if __name__ == '__main__':
         vqa_test  = prepare_data(coco_images_test, test_ques)
         
     print("Adding answer type indices")
-    vqa_train["annotations"] = ans_type_to_idx(vqa_train["annotations"])
+    ans_type_vocab = ans_type_to_idx(vqa_train["annotations"])
 
     if split_vocab:
         annotations = {}
-        annotations[0]  = [ anno for anno in vqa_train["annotations"] if anno["ans_type"] == 0 ]
-        annotations[1] =  [ anno for anno in vqa_train["annotations"] if anno["ans_type"] == 1 ]
-        annotations[2] =  [ anno for anno in vqa_train["annotations"] if anno["ans_type"] == 2 ]
+        annotations[0]  = [ anno for anno in vqa_train["annotations"] if anno["answer_type"] == 0 ]
+        annotations[1] =  [ anno for anno in vqa_train["annotations"] if anno["answer_type"] == 1 ]
+        annotations[2] =  [ anno for anno in vqa_train["annotations"] if anno["answer_type"] == 2 ]
 
         print("Preparing Answers Vocab ... ")
         ans_vocab = {}
         for key in annotations.keys():
-            # if key == "yes/no":
-            #     ans_vocab[key] = prepare_answers_vocab(annotations[key], topk=2)
-            # else:
-            ans_vocab[key] = prepare_answers_vocab(annotations[key], topk)
+            if key == ans_type_vocab("yes/no"):
+                ans_vocab[key] = prepare_answers_vocab(annotations[key], topk=2)
+            else:
+                ans_vocab[key] = prepare_answers_vocab(annotations[key], topk)
 
             annotations[key] = trim(annotations[key], ans_vocab[key])
-            annotations[key] = convert_field_to_index(annotations[key], ans_vocab[key], "ans")
-            annotations[key] = convert_field_to_index(annotations[key], ans_vocab[key], "MC_ans")
+            annotations[key] = convert_field_to_index(annotations[key], ans_vocab[key], "multiple_choice_answer")
+            annotations[key] = convert_field_to_index(annotations[key], ans_vocab[key], "answers")
         vqa_train["annotations"] = annotations[0] + annotations[1] + annotations[2]
     else:
         print("Preparing Answers Vocab ... ")
         ans_vocab = prepare_answers_vocab(vqa_train["annotations"], topk)
         print("Counting training samples to remove ... ")
-        vqa_train["annotations"] = trim(vqa_train["annotations"], ans_vocab, s='ans')
-        vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "ans")
-        vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "MC_ans")
+        vqa_train["annotations"] = trim(vqa_train["annotations"], ans_vocab, s='multiple_choice_answer')
+        vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "multiple_choice_answer")
+        vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "answers")
 
     print("Tokenizing....")
     vqa_train["annotations"] = tokenize(vqa_train["annotations"], "question")
@@ -272,7 +291,7 @@ if __name__ == '__main__':
     vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], question_type_vocab, "question_type")
     
     #print("Processing answer indices ...")
-    #vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "ans")
+    #vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "multiple_choice_answer")
 
 
 

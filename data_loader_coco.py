@@ -65,17 +65,16 @@ class CocoDataset(data.Dataset):
 
 
         question = torch.Tensor(question)
-        #ans_type = coco.anns[ann_id]['ans_type']
 
         if self.mode in ["test", "val"]:
-            return image, question, ann_id#, ans_type
+            return image, question, ann_id
 
-        ans      = coco.anns[ann_id]['ans']
+        ans      = coco.anns[ann_id]['multiple_choice_answer']
+        ans_type = coco.anns[ann_id]['answer_type']
         
-
         if self.classification:
             ans = torch.LongTensor([ans])
-            #ans_type = torch.LongTensor([ans_type])
+            ans_type = torch.LongTensor([ans_type])
         else:
             tokens = nltk.tokenize.word_tokenize(str(ans).lower())
             ans = []
@@ -86,7 +85,7 @@ class CocoDataset(data.Dataset):
         relative_weights = coco.anns[ann_id]['relative_weights']
 
 
-        return image, question, ann_id, ans, relative_weights#confidence
+        return image, question, ann_id, ans,ans_type, relative_weights
 
     def __len__(self):
         return len(self.ids)
@@ -113,7 +112,6 @@ def collate_fn_test(data):
 
     # Merge images (from tuple of 3D tensor to 4D tensor).
     images = torch.stack(images, 0)
-    #ans_type  = torch.cat(ans_type, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).
     lengths = [len(cap) for cap in captions]
@@ -122,7 +120,7 @@ def collate_fn_test(data):
         end = lengths[i]
         targets[i, :end] = cap[:end]
 
-    return images, targets, lengths, ann_id#, ans_type
+    return images, targets, lengths, ann_id
 
 def collate_fn_vqa(data):
     """Creates mini-batch tensors from the list of tuples (image, caption).
@@ -142,12 +140,12 @@ def collate_fn_vqa(data):
     """
     # Sort a data list by caption length (descending order).
     data.sort(key=lambda x: len(x[1]), reverse=True)
-    images, captions, ann_id, ans, relative_weights = zip(*data)
+    images, captions, ann_id, ans,ans_type, relative_weights = zip(*data)
 
     # Merge images (from tuple of 3D tensor to 4D tensor).
     images           = torch.stack(images, 0)
     ans              = torch.cat(ans, 0)
-    #ans_type         = torch.cat(ans_type, 0)
+    ans_type         = torch.cat(ans_type, 0)
     #confidence       = torch.stack(confidence, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).
@@ -165,7 +163,7 @@ def collate_fn_vqa(data):
     #     end = ans_lengths[i]
     #     ans_targets[i, :end] = cap[:end]
 
-    return images, targets, lengths, ann_id,ans, relative_weights #ans_targets, ans_lengths
+    return images, targets, lengths, ann_id,ans,ans_type, relative_weights#ans_targets, ans_lengths
 
 def get_loader(mode, question_vocab,ans_vocab, feature_path, transform, batch_size, shuffle, num_workers):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""

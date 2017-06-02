@@ -34,7 +34,7 @@ from tqdm import tqdm, trange
 def run(save_path, args):
     torch.manual_seed(args.seed)
 
-    split = 2 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
+    split = 1 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
 
     # Create model directory
     if not os.path.exists(args.model_path):
@@ -103,26 +103,27 @@ def run(save_path, args):
     total_iterations = 2500000
     t = trange(0, total_iterations)
 
-
     for iteration in t:
         try:
-            (images, captions, lengths, ann_id, ans, relative_weights) = next(data_loader)
+            data = next(data_loader)
         except StopIteration:
             data_loader = iter(train_data_loader)
-            (images, captions, lengths, ann_id, ans, relative_weights) = next(data_loader)
+            data = next(data_loader)
 
+        (images, captions, lengths, ann_id, ans, ans_type, relative_weights) = data
         # Set mini-batch dataset
         images        = Variable(images)
         captions      = Variable(captions)
         ans           = Variable(ans)
         #ans_type      = list(ans_type)
-        #ans_type      = Variable(ans_type)
+        ans_type      = Variable(ans_type)
         relative_weights = list(relative_weights)
 
         if torch.cuda.is_available():
             images = images.cuda()
             captions = captions.cuda()
             ans = ans.cuda()
+            ans_type = ans_type.cuda()
 
         netR.zero_grad()
         netM.zero_grad()
@@ -130,15 +131,18 @@ def run(save_path, args):
         text_features, text_all_output   = netR(captions, lengths)
         out                              = netM(visual_features, text_features, text_all_output, lengths)
 
-        #loss = criterion(out, ans)
+        loss     = criterion(out, ans)
+        #aux_loss = criterion(aux, ans_type)
+
+        #loss     = loss + 0.1 * aux_loss
 
         # turn on for instant performance boooosstt
-        loss = 0
-        for i, relative_weight in enumerate(relative_weights):
-            for (target, weight) in relative_weight:
-                target = Variable(torch.cuda.LongTensor([target]))
-                loss += weight * criterion(out[None,i], target)
-        loss /= len(relative_weights)
+        # loss = 0
+        # for i, relative_weight in enumerate(relative_weights):
+        #     for (target, weight) in relative_weight:
+        #         target = Variable(torch.cuda.LongTensor([target]))
+        #         loss += weight * criterion(out[None,i], target)
+        # loss /= len(relative_weights)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm(params, args.clip)
@@ -154,8 +158,8 @@ def run(save_path, args):
 
         # Print log info
         if iteration % args.log_step == 0:
-            print('Step [%d/%d] Loss: %5.4f, Perplexity: %5.4f'
-                  %(iteration, total_iterations,  loss.data[0], np.exp(loss.data[0])))
+            print('Step [%d/%d] Loss: %5.4f'
+                  %(iteration, total_iterations,  loss.data[0]))
 
 
         if iteration % args.tb_log_step == 0:
@@ -210,9 +214,12 @@ def export(netR, netM, data_loader, criterion,
         taskType    ='OpenEnded'
         dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
         dataSubType ='val2014'
-        annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
-        quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
-        imgDir      ='%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
+        #annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
+        #quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
+
+        annFile     = "data/val_annotations_trimmed.json"
+        quesFile    = "data/val_questions_trimmed.json"
+        imgDir      = '%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
         resFile     = json_save_dir
 
         vqa     = VQA(annFile, quesFile)
@@ -249,9 +256,9 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=25000,
+    parser.add_argument('--save_step', type=int , default=10000,
                         help='step size for saving trained models')
-    parser.add_argument('--val_step', type=int , default=25000,
+    parser.add_argument('--val_step', type=int , default=10000,
                         help='step size for saving trained models')
     
     # Model parameters
