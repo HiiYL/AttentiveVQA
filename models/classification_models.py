@@ -14,17 +14,20 @@ from LSTM import LSTMAttentive, LSTMSimple, LSTMSpatial, LSTMCustom
 from encoder import EncoderFC
 
 class MultimodalAttentionRNN(nn.Module):
-    def __init__(self, len_vocab, glimpse=2):
+    def __init__(self, ans_vocab, glimpse=2):
         super(MultimodalAttentionRNN, self).__init__()
         self.blockv = MLBBlockVAttention(2400, 1200, glimpse)
         self.blockq = MLBBlockQAttention(2048, 1200, glimpse)
         self.classifier = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(1200 * glimpse, 1200 * glimpse),
-            nn.Tanh(),
-            nn.Dropout(),
-            nn.Linear(1200 * glimpse, len_vocab)
+             # nn.Dropout(),
+             # nn.Linear(1200 * glimpse, 1200 * glimpse),
+             # nn.Tanh(),
+             nn.Dropout(),
+             nn.Linear(1200 * glimpse, len(ans_vocab))
         )
+        #self.classifier = nn.ModuleList([
+        #   nn.Sequential( nn.Dropout(), nn.Linear(1200 * glimpse, len(vocab)), nn.Tanh() )
+        #    for vocab in ans_vocab.values() ])
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -36,8 +39,12 @@ class MultimodalAttentionRNN(nn.Module):
     def forward(self,v,q, q_full, lengths):
         V = self.blockv(v,q)
         Q = self.blockq(v, q_full, lengths)
-
         z = V * Q
+        #outputs = []
+        #print(self.classifier)
+        #for i in range(z.size(0)):
+        #    outputs.append(self.classifier[ans_type[i]](z[None,i]))
+        #out = torch.cat(outputs, 0)
         out = self.classifier(z)
         return out
 
@@ -47,23 +54,20 @@ class MLBBlockVAttention(nn.Module):
         self.glimpse = glimpse
         self.visual_attn = nn.Sequential(
             nn.Dropout(),
-            nn.Conv2d(2048, 1200, kernel_size=1,stride=1,padding=0),
-            nn.Tanh()
+            nn.Conv2d(2048, output_size, kernel_size=1,stride=1,padding=0),
+            nn.PReLU()
         )
         self.question_attn = nn.Sequential(
             nn.Dropout(),
             nn.Linear(input_size,output_size),
-            nn.Tanh(),
+            nn.PReLU()
         )
         self.attn_block = nn.Conv2d(1200, glimpse, kernel_size=1,stride=1,padding=0)
         self.visual_embed = nn.Sequential(
             nn.Dropout(),
             nn.Linear(2048 * glimpse, output_size * glimpse),
-            nn.Tanh()
+            nn.PReLU()
         )
-        #self.visual_embed = nn.ModuleList([
-        #    nn.Sequential( nn.Dropout(), nn.Linear(2048, output_size), nn.Tanh() )
-        #     for i in range(glimpse) ])
         self._initialize_weights()
 
 
@@ -103,7 +107,6 @@ class MLBBlockVAttention(nn.Module):
 
         v    = torch.bmm(attn, v)
         # 200 x glimpse x 2048
-        #V = torch.cat([ layer(v[:,i,:]) for i,layer in enumerate(self.visual_embed) ], 1)
         V = self.visual_embed(v.view(v.size(0), -1))
 
         return V
@@ -114,23 +117,20 @@ class MLBBlockQAttention(nn.Module):
         self.glimpse = glimpse
         self.visual_attn = nn.Sequential(
             nn.Dropout(),
-            nn.Linear(2048, output_size),
-            nn.Tanh()
+            nn.Conv2d(2048, output_size, kernel_size=1,stride=1,padding=0),
+            nn.PReLU()
         )
         self.question_attn = nn.Sequential(
             nn.Dropout(),
             nn.Linear(2400,output_size),
-            nn.Tanh(),
+            nn.PReLU()
         )
         self.attn_block = nn.Conv1d(1200, glimpse, kernel_size=1, stride=1)
         self.question_embed = nn.Sequential(
             nn.Dropout(),
             nn.Linear(2400 * glimpse,output_size * glimpse),
-            nn.Tanh(),
+            nn.PReLU()
         )
-        #self.question_embed = nn.ModuleList([
-        #    nn.Sequential( nn.Dropout(), nn.Linear(input_size, output_size), nn.Tanh() )
-        #     for i in range(glimpse) ])
         self.adaptive_q_pool = nn.AdaptiveAvgPool1d(64)
         self._initialize_weights()
 
@@ -142,9 +142,9 @@ class MLBBlockQAttention(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self,v, q, lengths):
-        v = F.avg_pool2d(v, kernel_size=v.size()[2:]).view(v.size(0), v.size(1))
-
-        v_atten  = self.visual_attn(v).unsqueeze(1)
+        v       = self.visual_attn(v)
+        v       = F.avg_pool2d(v, kernel_size=v.size()[2:])
+        v_atten = v.view(v.size(0), 1, v.size(1))
 
         q = q.permute(0,2,1)
         q = self.adaptive_q_pool(q)
@@ -152,10 +152,9 @@ class MLBBlockQAttention(nn.Module):
         # 100 x 20 x 2400
         b, s, d = q.size()
         q_atten  = self.question_attn(q.view(b * s, d)).view(b,s,-1)
-        # 100 x 20 x 1200
-
+        # 100 x 64 x 1200
         v_replicate = v_atten.expand_as(q_atten)
-        # 100 x 20 x 1200
+        # 100 x 64 x 1200
 
         attn = q_atten * v_replicate
         attn = attn.permute(0,2,1).contiguous()
@@ -173,7 +172,6 @@ class MLBBlockQAttention(nn.Module):
         q    = torch.bmm(attn, q)
         # 200 x glimpse x 2048
 
-        #Q = torch.cat([ layer(q[:,i,:]) for i,layer in enumerate(self.question_embed) ], 1)
         Q = self.question_embed(q.view(q.size(0), -1))
 
         return Q

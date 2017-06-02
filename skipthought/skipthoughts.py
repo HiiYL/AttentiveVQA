@@ -127,7 +127,7 @@ class AbstractSkipThoughts(nn.Module):
         seq_length = x.size(1)
         mask = x.data.new().resize_as_(x.data).fill_(0)
         for i in range(batch_size):
-            mask[i][:(lengths[i]-1)].fill_(1)
+            mask[i][:lengths[i]].fill_(1)
         mask = Variable(mask)
 
         x = x.mul(mask)

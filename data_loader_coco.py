@@ -65,15 +65,17 @@ class CocoDataset(data.Dataset):
 
 
         question = torch.Tensor(question)
+        #ans_type = coco.anns[ann_id]['ans_type']
 
         if self.mode in ["test", "val"]:
-            return image, question, ann_id
+            return image, question, ann_id#, ans_type
 
         ans      = coco.anns[ann_id]['ans']
-        qtype    = coco.anns[ann_id]['question_type']
+        
 
         if self.classification:
             ans = torch.LongTensor([ans])
+            #ans_type = torch.LongTensor([ans_type])
         else:
             tokens = nltk.tokenize.word_tokenize(str(ans).lower())
             ans = []
@@ -111,6 +113,7 @@ def collate_fn_test(data):
 
     # Merge images (from tuple of 3D tensor to 4D tensor).
     images = torch.stack(images, 0)
+    #ans_type  = torch.cat(ans_type, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).
     lengths = [len(cap) for cap in captions]
@@ -119,7 +122,7 @@ def collate_fn_test(data):
         end = lengths[i]
         targets[i, :end] = cap[:end]
 
-    return images, targets, lengths, ann_id
+    return images, targets, lengths, ann_id#, ans_type
 
 def collate_fn_vqa(data):
     """Creates mini-batch tensors from the list of tuples (image, caption).
@@ -144,6 +147,7 @@ def collate_fn_vqa(data):
     # Merge images (from tuple of 3D tensor to 4D tensor).
     images           = torch.stack(images, 0)
     ans              = torch.cat(ans, 0)
+    #ans_type         = torch.cat(ans_type, 0)
     #confidence       = torch.stack(confidence, 0)
 
     # Merge captions (from tuple of 1D tensor to 2D tensor).

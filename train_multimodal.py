@@ -34,7 +34,7 @@ from tqdm import tqdm, trange
 def run(save_path, args):
     torch.manual_seed(args.seed)
 
-    split = 1 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
+    split = 2 # 1 -> train on train, test on val | 2 -> train on train+val, test on tesdev
 
     # Create model directory
     if not os.path.exists(args.model_path):
@@ -59,6 +59,9 @@ def run(save_path, args):
 
     with open(args.ans_vocab_path, 'rb') as f:
         ans_vocab = pickle.load(f)
+
+    with open("data/ans_type_vocab.pkl", 'rb') as f:
+        ans_type_vocab = pickle.load(f)
     
     train_data_loader = get_loader("train", question_vocab, ans_vocab, "data/features_598/",
                              train_transform, args.batch_size,
@@ -73,7 +76,7 @@ def run(save_path, args):
 
     # Build the models
     netR = EncoderSkipThought(question_vocab)
-    netM = MultimodalAttentionRNN(len(ans_vocab))
+    netM = MultimodalAttentionRNN(ans_vocab)
 
     if args.netR:
         print("[!]loading pretrained netR....")
@@ -112,6 +115,8 @@ def run(save_path, args):
         images        = Variable(images)
         captions      = Variable(captions)
         ans           = Variable(ans)
+        #ans_type      = list(ans_type)
+        #ans_type      = Variable(ans_type)
         relative_weights = list(relative_weights)
 
         if torch.cuda.is_available():
@@ -125,15 +130,15 @@ def run(save_path, args):
         text_features, text_all_output   = netR(captions, lengths)
         out                              = netM(visual_features, text_features, text_all_output, lengths)
 
-        loss = criterion(out, ans)
+        #loss = criterion(out, ans)
 
         # turn on for instant performance boooosstt
-        #loss = 0
-        #for i, relative_weight in enumerate(relative_weights):
-        #    for (target, weight) in relative_weight:
-        #        target = Variable(torch.cuda.LongTensor([target]))
-        #        loss += weight * criterion(out[None,i], target)
-        #loss /= len(relative_weights)
+        loss = 0
+        for i, relative_weight in enumerate(relative_weights):
+            for (target, weight) in relative_weight:
+                target = Variable(torch.cuda.LongTensor([target]))
+                loss += weight * criterion(out[None,i], target)
+        loss /= len(relative_weights)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm(params, args.clip)
@@ -158,13 +163,13 @@ def run(save_path, args):
             log_value('Perplexity', np.exp(loss.data[0]), iteration)
 
         if (iteration + 1) % args.save_step == 0:
-            torch.save(netR.state_dict(), os.path.join(save_path,'netR.pkl'))
-            torch.save(netM.state_dict(), os.path.join(save_path,'netM.pkl'))
+            #torch.save(netR.state_dict(), os.path.join(save_path,'netR.pkl'))
+            #torch.save(netM.state_dict(), os.path.join(save_path,'netM.pkl'))
             export(netR, netM, val_data_loader,
-             criterion, question_vocab,ans_vocab, iteration, save_path, validate=validate)
+             criterion, question_vocab,ans_vocab, ans_type_vocab, iteration, save_path, validate=validate)
 
 def export(netR, netM, data_loader, criterion,
-    question_vocab,ans_vocab, iteration, save_path, validate=False):
+    question_vocab,ans_vocab,ans_type_vocab, iteration, save_path, validate=False):
 
     for net in [netR, netM]:
         net.eval()
@@ -244,9 +249,9 @@ if __name__ == '__main__':
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=10000,
+    parser.add_argument('--save_step', type=int , default=25000,
                         help='step size for saving trained models')
-    parser.add_argument('--val_step', type=int , default=10000,
+    parser.add_argument('--val_step', type=int , default=25000,
                         help='step size for saving trained models')
     
     # Model parameters

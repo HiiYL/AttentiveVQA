@@ -15,7 +15,9 @@ question_vocab_path           = 'data/question_vocab.pkl'
 question_type_vocab_save_path = 'data/question_type_vocab.pkl'
 ans_vocab_save_path           = 'data/ans_vocab.pkl'
 
-split = 1
+split = 2
+
+split_vocab = False
 
 print("Loading Annotations ...")
 coco_caption = json.load(open('data/captions_train2014.json', 'r'))
@@ -98,6 +100,8 @@ def ans_type_to_idx(annotations):
 
     for anno in annotations:
         anno['ans_type'] = ans_type_vocab(anno['ans_type'])
+
+    pickle.dump(ans_type_vocab, open("data/ans_type_vocab.pkl", "wb"))
 
     return annotations
 
@@ -219,11 +223,34 @@ if __name__ == '__main__':
         print("Preparing Test Data")
         vqa_test  = prepare_data(coco_images_test, test_ques)
         
-    print("Preparing Answers Vocab ... ")
-    ans_vocab = prepare_answers_vocab(vqa_train["annotations"], topk)
+    print("Adding answer type indices")
+    vqa_train["annotations"] = ans_type_to_idx(vqa_train["annotations"])
 
-    print("Counting training samples to remove ... ")
-    vqa_train["annotations"] = trim(vqa_train["annotations"], ans_vocab, s='ans')
+    if split_vocab:
+        annotations = {}
+        annotations[0]  = [ anno for anno in vqa_train["annotations"] if anno["ans_type"] == 0 ]
+        annotations[1] =  [ anno for anno in vqa_train["annotations"] if anno["ans_type"] == 1 ]
+        annotations[2] =  [ anno for anno in vqa_train["annotations"] if anno["ans_type"] == 2 ]
+
+        print("Preparing Answers Vocab ... ")
+        ans_vocab = {}
+        for key in annotations.keys():
+            # if key == "yes/no":
+            #     ans_vocab[key] = prepare_answers_vocab(annotations[key], topk=2)
+            # else:
+            ans_vocab[key] = prepare_answers_vocab(annotations[key], topk)
+
+            annotations[key] = trim(annotations[key], ans_vocab[key])
+            annotations[key] = convert_field_to_index(annotations[key], ans_vocab[key], "ans")
+            annotations[key] = convert_field_to_index(annotations[key], ans_vocab[key], "MC_ans")
+        vqa_train["annotations"] = annotations[0] + annotations[1] + annotations[2]
+    else:
+        print("Preparing Answers Vocab ... ")
+        ans_vocab = prepare_answers_vocab(vqa_train["annotations"], topk)
+        print("Counting training samples to remove ... ")
+        vqa_train["annotations"] = trim(vqa_train["annotations"], ans_vocab, s='ans')
+        vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "ans")
+        vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "MC_ans")
 
     print("Tokenizing....")
     vqa_train["annotations"] = tokenize(vqa_train["annotations"], "question")
@@ -244,14 +271,13 @@ if __name__ == '__main__':
     print("Processing question type indices ...")
     vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], question_type_vocab, "question_type")
     
-    print("Processing answer indices ...")
-    vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "ans")
+    #print("Processing answer indices ...")
+    #vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "ans")
 
-    print("Adding answer type indices")
-    vqa_train["annotations"] = ans_type_to_idx(vqa_train["annotations"])
+
 
     print("Adding MC_ans indices and calculating answer confidence")
-    vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "MC_ans")
+    #vqa_train["annotations"] = convert_field_to_index(vqa_train["annotations"], ans_vocab, "MC_ans")
     vqa_train["annotations"] = calculate_confidence(vqa_train["annotations"])
 
     print("Saving VQA training data ...")
