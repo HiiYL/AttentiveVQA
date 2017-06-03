@@ -150,7 +150,7 @@ class EncoderSkipThought(nn.Module):
         super(EncoderSkipThought, self).__init__()
 
         dir_st = 'skipthought/data/skip-thoughts'
-        self.biskip = BayesianUniSkip(dir_st, vocab.word2idx.keys(), dropout=.25)
+        self.buskip = BayesianUniSkip(dir_st, vocab.word2idx.keys(), dropout=.25)
 
     def forward(self, inputs, lengths):
-        return self.biskip(inputs, lengths=lengths)
+        return self.buskip(inputs, lengths=lengths)
