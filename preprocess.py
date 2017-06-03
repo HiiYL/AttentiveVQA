@@ -15,7 +15,7 @@ question_vocab_path           = 'data/question_vocab.pkl'
 question_type_vocab_save_path = 'data/question_type_vocab.pkl'
 ans_vocab_save_path           = 'data/ans_vocab.pkl'
 
-split = 1
+split = 3
 
 split_vocab = False
 
@@ -33,28 +33,31 @@ val_ques   = json.load(open("data/Questions/v2_OpenEnded_mscoco_val2014_question
 test_ques = json.load(open("data/Questions/v2_OpenEnded_mscoco_test-dev2015_questions.json", "r"))
 
 
-def prepare_data(coco_data, ques, annotations=None):
+def prepare_data(coco_data, questions, annotations=None):
     vqa = {}
     if annotations is None:
-        for question in ques["questions"]:
+        for question in questions:
             question["id"] = question["question_id"]
-        vqa["annotations"] = ques["questions"]
+        vqa["annotations"] = questions
     else:
         for i, annotation in enumerate(tqdm(annotations)):
-            annotation['question']  = ques['questions'][i]['question']
+            annotation['question']  = questions[i]['question']
             annotation['id']        = annotation['question_id']
             annotation['answers']   = [ item['answer'] for item in annotation['answers'] ]
         vqa["annotations"] = annotations
     
-    vqa["images"] =  coco_data["images"]
+    vqa["images"] =  coco_data
     return vqa
 
-def merge(vqa_1, vqa_2):
-    vqa_merged = {}
-    vqa_merged["annotations"] = vqa_1["annotations"] + vqa_2["annotations"]
-    vqa_merged["images"] = vqa_1["images"] + vqa_2["images"]
+def merge(dict_1, dict_2):
+    merged = {}
+    for key in dict_1.keys():
+        if isinstance(dict_1[key], list):
+            merged[key] = dict_1[key] + dict_2[key]
 
-    return vqa_merged
+    return merged
+
+
 
 def prepare_answers_vocab(annotations, topk):
     s = 'multiple_choice_answer'
@@ -207,40 +210,85 @@ def trim_by_type(questions, annotations, keep="number"):
 
     return questions, annotations
 
+def karpathy_split(coco_caption,questions, annotations ):
+    test  = coco_caption["images"][:500]
+    train = coco_caption["images"][500:]
+
+    test_img_ids  = set( i["id"] for i in test )
+    train_img_ids = set( i["id"] for i in train )
+
+    train_inputs = {}
+    test_inputs  = {}
+
+    test_inputs["images"]      = test
+    test_inputs["annotations"] = []
+    test_inputs["questions"]   = []
+
+    train_inputs["images"]      = train
+    train_inputs["annotations"] = []
+    train_inputs["questions"]   = []
+
+    for annotation in annotations["annotations"]:
+        if annotation["image_id"] in test_img_ids:
+            test_inputs["annotations"].append(annotation)
+        else:
+            train_inputs["annotations"].append(annotation)
+
+    for question in questions["questions"]:
+        if question["image_id"] in test_img_ids:
+            test_inputs["questions"].append(question)
+        else:
+            train_inputs["questions"].append(question)
+
+    return train_inputs, test_inputs
+
 
 if __name__ == '__main__':
     if split == 1:
         print("--------------------------------")
         print("| Train -> Train | Test -> Val |")
         print("--------------------------------")
-        
-        train_ques["questions"], train_anno["annotations"] = \
-        trim_by_type(train_ques["questions"], train_anno["annotations"])
-
-        val_ques["questions"], val_anno["annotations"] = \
-        trim_by_type(val_ques["questions"], val_anno["annotations"])
-
-        json.dump(val_anno, open("data/val_annotations_trimmed.json", "wb"))
-        json.dump(val_ques, open("data/val_questions_trimmed.json", "wb"))
-
         print("Preparing Training Data ... ")
-        vqa_train = prepare_data(coco_caption, train_ques, train_anno["annotations"])
+        vqa_train = prepare_data(coco_caption, train_ques["questions"], train_anno["annotations"])
 
         print("Preparing Validation Data ... ")
-        vqa_test   = prepare_data(coco_caption_val, val_ques)
-
+        vqa_test   = prepare_data(coco_caption_val, val_ques["questions"])
     elif split == 2:
         print("---------------------------------------")
         print("| Train -> Train + Val | Test -> Test |")
         print("---------------------------------------")
         print("Preparing Training Data ... ")
-        vqa_train = prepare_data(coco_caption    , train_ques, train_anno["annotations"])
-        vqa_val   = prepare_data(coco_caption_val, val_ques  , val_anno["annotations"])
+        vqa_train = prepare_data(coco_caption    , train_ques["questions"], train_anno["annotations"])
+        vqa_val   = prepare_data(coco_caption_val, val_ques["questions"]  , val_anno["annotations"])
 
         vqa_train = merge(vqa_train, vqa_val)
 
         print("Preparing Test Data")
         vqa_test  = prepare_data(coco_images_test, test_ques)
+    elif split == 3:
+        print("--------------------------------------")
+        print("| Train -> K_Split | Test -> K_Split |")
+        print("--------------------------------------")
+        coco_captions = merge(coco_caption, coco_caption_val)
+        questions     = merge(train_ques, val_ques)
+        annotations   = merge(train_anno, val_anno)
+
+        train_inputs, test_inputs = karpathy_split(coco_captions, questions, annotations)
+
+        val_ques["questions"] = test_inputs["questions"]
+        json.dump(val_ques, open("data/val_questions_trimmed.json", "wb"))
+
+        val_anno["annotations"] = test_inputs["annotations"]
+        json.dump(val_anno, open("data/val_annotations_trimmed.json", "wb"))
+
+        print("Preparing Training Data ... ")
+        vqa_train = prepare_data(train_inputs["images"], train_inputs["questions"], train_inputs["annotations"])
+
+        print("Preparing Validation Data ... ")
+        vqa_test = prepare_data(test_inputs["images"], test_inputs["questions"], test_inputs["annotations"])
+        
+
+
         
     print("Adding answer type indices")
     ans_type_vocab = ans_type_to_idx(vqa_train["annotations"])
