@@ -11,17 +11,30 @@ import os
 import torch.nn.functional as F
 from torch.nn.init import kaiming_uniform
 from LSTM import LSTMAttentive, LSTMSimple, LSTMSpatial, LSTMCustom
-from encoder import EncoderFC
 
 class MultimodalAttentionRNN(nn.Module):
-    def __init__(self, ans_vocab, glimpse=2):
+    def __init__(self, ans_vocab, glimpse=2,dropout=0.5, joint=False):
         super(MultimodalAttentionRNN, self).__init__()
-        self.blockv = MLBBlockVAttention(2400, 1200, glimpse, joint=False)
-        #self.blockq = MLBBlockQAttention(2048, 1200, glimpse, joint=True)
+        self.joint = joint
+        self.blockv = MLBBlockVAttention(2400, 1200, glimpse, joint=joint,dropout=dropout)
         self.classifier = nn.Sequential(
-             nn.Dropout(),
+             nn.Dropout(dropout),
              nn.Linear(1200 * glimpse, len(ans_vocab))
         )
+
+        if self.joint:
+            self.blockq = MLBBlockQAttention(2048, 1200, glimpse, joint=joint,dropout=dropout)
+            self.visual_skip = nn.Sequential(
+                nn.Dropout(dropout),
+                nn.Linear(2048, 1200 * glimpse),
+                nn.PReLU()
+            )
+            self.question_skip = nn.Sequential(
+                nn.Dropout(dropout),
+                nn.Linear(2400, 1200 * glimpse),
+                nn.PReLU()
+            )
+
 
         self._initialize_weights()
 
@@ -32,35 +45,48 @@ class MultimodalAttentionRNN(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self,v,q, q_full, lengths):
-        z = self.blockv(v,q) #* self.blockq(v, q_full, lengths)
+        if self.joint:
+            v_global = F.avg_pool2d(v, kernel_size=v.size()[2:])[:,:,0,0]
+
+            v_skip = self.visual_skip(v_global)
+            v      = self.blockv(v,q)
+            v      = v + v_skip
+
+            q_skip = self.question_skip(q)
+            q      = self.blockq(v_global, q_full, lengths)
+            q      = q + q_skip
+
+            z   = v * q
+        else:
+            z = self.blockv(v,q)
         out = self.classifier(z)
 
         return out
 
 class MLBBlockVAttention(nn.Module):
-    def __init__(self, input_size, output_size, glimpse, joint=False):
+    def __init__(self, input_size, output_size, glimpse, joint=False,dropout=0.25):
         super(MLBBlockVAttention, self).__init__()
         self.glimpse = glimpse
         self.visual_attn = nn.Sequential(
-            nn.Dropout(),
+            nn.Dropout(dropout),
             nn.Conv2d(2048, output_size, kernel_size=1,stride=1,padding=0),
             nn.PReLU()
         )
         self.question_attn = nn.Sequential(
-            nn.Dropout(),
+            nn.Dropout(dropout),
             nn.Linear(input_size,output_size),
             nn.PReLU()
         )
-        self.attn_block = nn.Conv2d(1200, glimpse, kernel_size=1,stride=1,padding=0)
+        self.attn_block = nn.Conv2d(output_size, glimpse, kernel_size=1,stride=1,padding=0)
         self.visual_embed = nn.Sequential(
-            nn.Dropout(),
+            nn.Dropout(dropout),
             nn.Linear(2048 * glimpse, output_size * glimpse),
             nn.PReLU()
         )
         self.joint = joint
         if not joint:
             self.question_embed = nn.Sequential(
-                nn.Dropout(),
+                nn.Dropout(dropout),
                 nn.Linear(2400, output_size * glimpse),
                 nn.PReLU()
             )
@@ -112,30 +138,30 @@ class MLBBlockVAttention(nn.Module):
             return V * q
 
 class MLBBlockQAttention(nn.Module):
-    def __init__(self, input_size, output_size, glimpse, joint=False):
+    def __init__(self, input_size, output_size, glimpse, joint=False,dropout=0.25):
         super(MLBBlockQAttention, self).__init__()
         self.glimpse = glimpse
         self.adaptive_q_pool = nn.AdaptiveAvgPool1d(64)
         self.visual_attn = nn.Sequential(
-            nn.Dropout(),
+            nn.Dropout(dropout),
             nn.Linear(2048, output_size),
             nn.PReLU()
         )
         self.question_attn = nn.Sequential(
-            nn.Dropout(),
+            nn.Dropout(dropout),
             nn.Linear(2400,output_size),
             nn.PReLU()
         )
-        self.attn_block = nn.Conv1d(1200, glimpse, kernel_size=1, stride=1)
+        self.attn_block = nn.Conv1d(output_size, glimpse, kernel_size=1, stride=1)
         self.question_embed = nn.Sequential(
-            nn.Dropout(),
+            nn.Dropout(dropout),
             nn.Linear(2400 * glimpse,output_size * glimpse),
             nn.PReLU()
         )
         self.joint = joint
         if not joint:
             self.visual_embed = nn.Sequential(
-                nn.Dropout(),
+                nn.Dropout(dropout),
                 nn.Linear(2048, output_size * glimpse),
                 nn.PReLU()
             )
@@ -149,7 +175,6 @@ class MLBBlockQAttention(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self,v, q, lengths):
-        v       = F.avg_pool2d(v, kernel_size=v.size()[2:])
         v       = v.view(v.size(0), v.size(1))
         v_atten = self.visual_attn(v).unsqueeze(1)
 

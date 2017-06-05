@@ -85,62 +85,62 @@ class EncoderCNN(nn.Module):
 
         return x
 
-class EncoderFC(nn.Module):
-    def __init__(self, global_only=False):
-        super(EncoderFC, self).__init__()
-        self.global_only = global_only
-        self.fc_global = nn.Sequential(
-            nn.Conv2d(2048, 512, kernel_size=1,stride=1, padding=0),
-            nn.BatchNorm2d(512),
-            nn.ReLU()
-        )
-        if not global_only:
-            self.fc_local = nn.Sequential(
-                nn.Conv2d(2048, 512, kernel_size=1,stride=1, padding=0),
-                nn.BatchNorm2d(512),
-                nn.ReLU()
-            )
-        self._initialize_weights()
+# class EncoderFC(nn.Module):
+#     def __init__(self, global_only=False):
+#         super(EncoderFC, self).__init__()
+#         self.global_only = global_only
+#         self.fc_global = nn.Sequential(
+#             nn.Conv2d(2048, 512, kernel_size=1,stride=1, padding=0),
+#             nn.BatchNorm2d(512),
+#             nn.ReLU()
+#         )
+#         if not global_only:
+#             self.fc_local = nn.Sequential(
+#                 nn.Conv2d(2048, 512, kernel_size=1,stride=1, padding=0),
+#                 nn.BatchNorm2d(512),
+#                 nn.ReLU()
+#             )
+#         self._initialize_weights()
 
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                kaiming_uniform(m.weight.data)
-                m.bias.data.zero_()
+#     def _initialize_weights(self):
+#         for m in self.modules():
+#             if isinstance(m, nn.Linear):
+#                 kaiming_uniform(m.weight.data)
+#                 m.bias.data.zero_()
 
-    def forward(self, x):
-        x_global = self.fc_global(x)
-        x_global = F.avg_pool2d(x_global, kernel_size=x_global.size()[2:])[:,:,0,0]
+#     def forward(self, x):
+#         x_global = self.fc_global(x)
+#         x_global = F.avg_pool2d(x_global, kernel_size=x_global.size()[2:])[:,:,0,0]
 
-        if not self.global_only:
-            x_local = self.fc_local(x)
-            x_local = x_local.view(x_local.size(0), x_local.size(1), x_local.size(2) * x_local.size(3))
-            return x_global, x_local
+#         if not self.global_only:
+#             x_local = self.fc_local(x)
+#             x_local = x_local.view(x_local.size(0), x_local.size(1), x_local.size(2) * x_local.size(3))
+#             return x_global, x_local
 
-        return x_global
+#         return x_global
 
-class EncoderRNN(nn.Module):
-    def __init__(self, embed_size, hidden_size, vocab_size, num_layers):
-        """Set the hyper-parameters and build the layers."""
-        super(EncoderRNN, self).__init__()
-        self.embed = nn.Embedding(vocab_size, embed_size)
-        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True, bidirectional=True)
-        self.init_weights()
+# class EncoderRNN(nn.Module):
+#     def __init__(self, embed_size, hidden_size, vocab_size, num_layers):
+#         """Set the hyper-parameters and build the layers."""
+#         super(EncoderRNN, self).__init__()
+#         self.embed = nn.Embedding(vocab_size, embed_size)
+#         self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True, bidirectional=True)
+#         self.init_weights()
     
-    def init_weights(self):
-        """Initialize weights."""
-        self.embed.weight.data.uniform_(-0.1, 0.1)
+#     def init_weights(self):
+#         """Initialize weights."""
+#         self.embed.weight.data.uniform_(-0.1, 0.1)
         
-    def forward(self, captions, lengths):
-        """Decode image feature vectors and generates captions."""
-        embeddings = self.embed(captions)
-        packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
-        hiddens, _ = self.lstm(packed)
+#     def forward(self, captions, lengths):
+#         """Decode image feature vectors and generates captions."""
+#         embeddings = self.embed(captions)
+#         packed = pack_padded_sequence(embeddings, lengths, batch_first=True) 
+#         hiddens, _ = self.lstm(packed)
 
-        hiddens_padded, _ = pad_packed_sequence(hiddens, batch_first=True)
-        last_hiddens = [ hiddens_padded[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
-        last_hiddens = torch.cat(last_hiddens, 0)
-        return last_hiddens #hiddens_padded
+#         hiddens_padded, _ = pad_packed_sequence(hiddens, batch_first=True)
+#         last_hiddens = [ hiddens_padded[i, length - 1, :].unsqueeze(0) for i, length in enumerate(lengths)]
+#         last_hiddens = torch.cat(last_hiddens, 0)
+#         return last_hiddens #hiddens_padded
 
 
 from skipthought.skipthoughts import UniSkip, BiSkip,BayesianUniSkip
