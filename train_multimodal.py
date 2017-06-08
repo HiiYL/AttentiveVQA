@@ -94,12 +94,12 @@ class Trainer():
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
             ])
         
-        self.train_data_loader = get_loader("train", self.question_vocab, self.ans_vocab, "data/features_598/",
+        self.train_data_loader = get_loader("train", self.question_vocab, self.ans_vocab, "data/features_resnet_448/",
                                  train_transform, args.batch_size,
                                  shuffle=True, num_workers=args.num_workers)
 
         self.validate = (split == 1)
-        val_data_path = "data/features_598/" if split == 1 else "data/features_test_598"
+        val_data_path = "data/features_resnet_448/" if split == 1 else "data/features_resnet_448_test"
 
         self.val_data_loader = get_loader("test", self.question_vocab, self.ans_vocab, val_data_path,
                                  train_transform, args.val_batch_size,
@@ -155,16 +155,16 @@ class Trainer():
             text_features, text_all_output   = self.netR(captions, lengths)
             out                              = self.netM(visual_features, text_features, text_all_output, lengths)
 
-            #loss     = self.criterion(out, ans)
+            loss     = self.criterion(out, ans)
             #aux_loss = self.riterion(aux, ans_type)
 
             #turn on for instant performance boooosstt
-            loss = 0
-            for i, relative_weight in enumerate(relative_weights):
-                for (target, weight) in relative_weight:
-                    target = Variable(torch.cuda.LongTensor([target]))
-                    loss += weight * self.criterion(out[None,i], target)
-            loss /= len(relative_weights)
+            # loss = 0
+            # for i, relative_weight in enumerate(relative_weights):
+            #     for (target, weight) in relative_weight:
+            #         target = Variable(torch.cuda.LongTensor([target]))
+            #         loss += weight * self.criterion(out[None,i], target)
+            # loss /= len(relative_weights)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm(self.params, args.clip)

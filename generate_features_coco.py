@@ -58,39 +58,45 @@ class CocoImgDataset(data.Dataset):
     def __len__(self):
         return len(self.ids)
 
-def train(save_path, args):
-    # Create model directory
-    if not os.path.exists(args.model_path):
-        os.makedirs(args.model_path)
+def generate_features(args):
+    model_resolutions = { "inception_v3": 299, "resnet": 224 }
+    crop_size = model_resolutions[args.model] * args.scale
     
     # Image preprocessing
     transform = transforms.Compose([
-        transforms.Scale((args.crop_size, args.crop_size)),
+        transforms.Scale((crop_size, crop_size)),
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     
-    coco = CocoImgDataset(
-        image_dir="/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/Images/mscoco/test2015",
-         annotation_dir="data/image_info_test2015.json",
+    test_coco = CocoImgDataset(
+        image_dir="/media/citi/afb54f66-7906-4a61-8711-eb01902c9faf/Images/mscoco/merged2014",
+         annotation_dir="data/vqa_train.json",
          transform=transform)
 
-    data_loader = torch.utils.data.DataLoader(dataset=coco, 
+    test_data_loader = torch.utils.data.DataLoader(dataset=test_coco, 
                                           batch_size=args.batch_size,
                                           shuffle=False,
                                           num_workers=args.num_workers)
     # Build the models
-    encoder = EncoderCNN(args.embed_size,models.inception_v3(pretrained=True), requires_grad=False)
+    if args.model == "inception":
+        model = models.inception_v3(pretrained=True)
+        encoder = EncoderCNN(model, requires_grad=False)
+    elif args.model == "resnet":
+        encoder =  nn.Sequential(*list(models.resnet152(pretrained=True).children())[:-2]) 
+
+
+    
 
     if torch.cuda.is_available():
         encoder = encoder.cuda()
 
-    save_path = "data/features_test_598"
+    save_path = "data/features_{}_{}".format(args.model, crop_size)
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
 
     # Train the Models
-    total_step = len(data_loader)
-    total_iterations = 0
     encoder.eval()
-    for (images,img_id) in tqdm(data_loader):
+    for (images,img_id) in tqdm(test_data_loader):
         # Set mini-batch dataset
         images = Variable(images, volatile=True)
         if torch.cuda.is_available():
@@ -109,52 +115,12 @@ def train(save_path, args):
                 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_path', type=str, default='./models/' ,
-                        help='path for saving trained models')
-    parser.add_argument('--crop_size', type=int, default=598 ,
-                        help='size for randomly cropping images')
-    parser.add_argument('--vocab_path', type=str, default='data/vocab.pkl',
-                        help='path for vocabulary wrapper')
-    parser.add_argument('--dataset', type=str, default='aesthetics' ,
-                        help='dataset to use')
-    parser.add_argument('--comments_path', type=str,
-                        default='data/labels.h5',
-                        help='path for train annotation json file')
-    parser.add_argument('--log_step', type=int , default=10,
-                        help='step size for prining log info')
-    parser.add_argument('--tb_log_step', type=int , default=10,
-                        help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=10000,
-                        help='step size for saving trained models')
-    
-    # Model parameters
-    parser.add_argument('--embed_size', type=int , default=512 ,
-                        help='dimension of word embedding vectors')
-    parser.add_argument('--hidden_size', type=int , default=512 ,
-                        help='dimension of lstm hidden states')
-    parser.add_argument('--num_layers', type=int , default=3 ,
-                        help='number of layers in lstm')
-    parser.add_argument('--pretrained', type=str)#, default='-2-20000.pkl')
-    
-    parser.add_argument('--num_epochs', type=int, default=500)
+    parser.add_argument('--model', choices=['inception','resnet'] , help='type of model to use')
+    parser.add_argument('--scale', type=int, default=2 , help='input image resolution multiplier')
+
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_workers', type=int, default=8)
-    parser.add_argument('--learning_rate', type=float, default=0.001)
-    parser.add_argument('--clip', type=float, default=1.0,help='gradient clipping')
     args = parser.parse_args()
     print(args)
 
-    if not os.path.exists("logs"):
-        os.mkdir("logs")
-
-    if not os.path.exists(os.path.join("logs", args.dataset)):
-        os.mkdir(os.path.join("logs", args.dataset))
-
-    now = datetime.datetime.now().strftime('%d%m%Y%H%M%S')
-    save_path = os.path.join(os.path.join("logs", args.dataset), now)
-
-    if not os.path.exists(save_path):
-        os.mkdir(save_path)
-
-    configure(save_path)
-    train(save_path, args)
+    generate_features(args)

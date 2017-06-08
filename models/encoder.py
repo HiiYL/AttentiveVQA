@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch.nn.init import kaiming_uniform
 
 class EncoderCNN(nn.Module):
-    def __init__(self, embed_size,inception, requires_grad=False):
+    def __init__(self,inception, requires_grad=False):
         """Load the pretrained ResNet-152 and replace top fc layer."""
         super(EncoderCNN, self).__init__()
         self.aux_logits = False
