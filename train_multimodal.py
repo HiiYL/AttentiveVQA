@@ -36,14 +36,12 @@ class Trainer():
     def __init__(self,args):
         self.args = args
         torch.manual_seed(args.seed)
-        split = args.split
 
         # Create model directory
         if not os.path.exists(args.model_path):
             os.makedirs(args.model_path)
 
-        self.prepare_tensorboard_dir(args)
-
+        self._prepare_tensorboard_dir(args)
         self._load_vocab(args)
         self._prepare_dataloader(args)
 
@@ -82,6 +80,7 @@ class Trainer():
         self.ans_type_vocab = vocabs["ans_type"]
 
     def _prepare_dataloader(self, args):
+        split = args.split
         # Image preprocessing
         train_transform = transforms.Compose([
             transforms.Scale((299,299)),
@@ -106,7 +105,7 @@ class Trainer():
                                  train_transform, args.val_batch_size,
                                  shuffle=False, num_workers=args.num_workers)
 
-    def prepare_tensorboard_dir(self,args):
+    def _prepare_tensorboard_dir(self,args):
         if not os.path.exists("logs"):
             os.mkdir("logs")
 
@@ -235,11 +234,13 @@ class Trainer():
             taskType    ='OpenEnded'
             dataType    ='mscoco'  # 'mscoco' for real and 'abstract_v002' for abstract
             dataSubType ='val2014'
-            #annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
-            #quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
+            if args.split == 3:
+                annFile     = "data/val_annotations_trimmed.json"
+                quesFile    = "data/val_questions_trimmed.json"
+            else:
+                annFile     ='%s/Annotations/v2_%s_%s_annotations.json'%(dataDir, dataType, dataSubType)
+                quesFile    ='%s/Questions/v2_%s_%s_%s_questions.json'%(dataDir, taskType, dataType, dataSubType)
 
-            annFile     = "data/val_annotations_trimmed.json"
-            quesFile    = "data/val_questions_trimmed.json"
             imgDir      = '%s/Images/%s/%s/' %(dataDir, dataType, dataSubType)
             resFile     = json_save_dir
 

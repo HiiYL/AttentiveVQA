@@ -39,8 +39,6 @@ class CocoDataset(data.Dataset):
         self.mode      = mode
         self.classification = classification
 
-        self.question_type_vocab = pickle.load(open("data/question_type_vocab.pkl", "r"))
-
     def __getitem__(self, index):
         """Returns one data pair (image and caption)."""
         coco           = self.coco

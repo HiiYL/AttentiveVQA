@@ -12,7 +12,7 @@ vqa_test_save_path            = "data/vqa_test.json"
 vocabs_save_path              = 'data/vocabs.pkl'
 
 topk        = 2000
-split       = 3 # 1 - train->train, test->val | 2 - train->train+val | 3 - karpathy's split
+split       = 2 # 1 - train->train, test->val | 2 - train->train+val | 3 - karpathy's split
 
 print("Loading Annotations ...")
 coco_caption     = json.load(open('data/captions_train2014.json', 'r'))
@@ -84,8 +84,6 @@ def ans_type_to_idx(annotations):
 
     for anno in annotations:
         anno["answer_type"] = ans_type_vocab(anno["answer_type"])
-
-    pickle.dump(ans_type_vocab, open("data/ans_type_vocab.pkl", "wb"))
 
     return ans_type_vocab
 
@@ -240,17 +238,17 @@ if __name__ == '__main__':
         print("| Train -> Train | Test -> Val |")
         print("--------------------------------")
         print("Preparing Training Data ... ")
-        vqa_train = prepare_data(coco_caption, train_ques["questions"], train_anno["annotations"])
+        vqa_train = prepare_data(coco_caption["images"], train_ques["questions"], train_anno["annotations"])
 
         print("Preparing Validation Data ... ")
-        vqa_test   = prepare_data(coco_caption_val, val_ques["questions"])
+        vqa_test   = prepare_data(coco_caption_val["images"], val_ques["questions"])
     elif split == 2:
         print("---------------------------------------")
         print("| Train -> Train + Val | Test -> Test |")
         print("---------------------------------------")
         print("Preparing Training Data ... ")
-        vqa_train = prepare_data(coco_caption    , train_ques["questions"], train_anno["annotations"])
-        vqa_val   = prepare_data(coco_caption_val, val_ques["questions"]  , val_anno["annotations"])
+        vqa_train = prepare_data(coco_caption["images"]    , train_ques["questions"], train_anno["annotations"])
+        vqa_val   = prepare_data(coco_caption_val["images"], val_ques["questions"]  , val_anno["annotations"])
 
         vqa_train = merge(vqa_train, vqa_val)
 

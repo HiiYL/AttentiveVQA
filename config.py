@@ -1,3 +1,4 @@
+import argparse
 def get_config():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', type=str, default='./models/', help='path for saving trained models')
