@@ -35,8 +35,6 @@ class MultimodalAttentionRNN(nn.Module):
                 nn.Dropout(dropout),
                 nn.Linear(2400, 1200 * glimpse)
             )
-
-
         self._initialize_weights()
 
     def _initialize_weights(self):
@@ -71,25 +69,25 @@ class MLBBlockVAttention(nn.Module):
         self.visual_attn = nn.Sequential(
             nn.Dropout(dropout),
             nn.Conv2d(2048, output_size, kernel_size=1,stride=1,padding=0),
-            nn.PReLU()
+            nn.Tanh()
         )
         self.question_attn = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(input_size,output_size),
-            nn.PReLU()
+            nn.Tanh()
         )
         self.attn_block = nn.Conv2d(output_size, glimpse, kernel_size=1,stride=1,padding=0)
         self.visual_embed = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(2048 * glimpse, output_size * glimpse),
-            nn.PReLU()
+            nn.Tanh()
         )
         self.joint = joint
         if not joint:
             self.question_embed = nn.Sequential(
                 nn.Dropout(dropout),
                 nn.Linear(2400, output_size * glimpse),
-                nn.PReLU()
+                nn.Tanh()
             )
         self._initialize_weights()
 

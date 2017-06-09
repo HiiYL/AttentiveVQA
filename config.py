@@ -14,9 +14,9 @@ def get_config():
                         help='step size for prining log info')
     parser.add_argument('--tb_log_step', type=int , default=100,
                         help='step size for prining log info')
-    parser.add_argument('--save_step', type=int , default=10000,
+    parser.add_argument('--save_step', type=int , default=25000,
                         help='step size for saving trained models')
-    parser.add_argument('--val_step', type=int , default=10000,
+    parser.add_argument('--val_step', type=int , default=25000,
                         help='step size for saving trained models')
     
     # Model parameters
@@ -37,7 +37,7 @@ def get_config():
     parser.add_argument('--learning_rate', type=float, default=3e-4)
     parser.add_argument('--kick', type=int, default=50000)
     parser.add_argument('--seed', type=int, default=123)
-    parser.add_argument('--split', type=int, default=1)
+    parser.add_argument('--split', type=int, default=2)
 
     args = parser.parse_args()
 
