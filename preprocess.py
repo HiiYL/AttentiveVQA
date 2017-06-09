@@ -253,7 +253,7 @@ if __name__ == '__main__':
         vqa_train = merge(vqa_train, vqa_val)
 
         print("Preparing Test Data")
-        vqa_test  = prepare_data(coco_images_test, test_ques)
+        vqa_test  = prepare_data(coco_images_test["images"], test_ques["questions"])
     elif split == 3:
         print("--------------------------------------")
         print("| Train -> K_Split | Test -> K_Split |")
